@@ -72,9 +72,11 @@ saferun/
 ## 📊 Components
 
 ### RunSafe Gateway
-- Proxies all AI API calls
-- Logs requests and responses
-- Applies GDPR policies in real-time
+- **Multi-Provider Support**: OpenAI, Anthropic with more providers coming
+- **Smart Authentication**: Auto-transforms headers for different providers
+- **Complete API Coverage**: Chat, embeddings, messages, and latest 2025 APIs
+- **Real-time Logging**: All requests/responses with correlation IDs
+- **GDPR Policy Engine**: Real-time compliance monitoring
 
 ### RunSafe Tap
 - Monitors container network traffic

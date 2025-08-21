@@ -1,0 +1,165 @@
+{
+  "name": "Multi-Provider AI Concierge",
+  "nodes": [
+    {
+      "parameters": {
+        "path": "multi-concierge",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "1",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [250, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{$json.provider}}",
+              "operation": "equal",
+              "value2": "anthropic"
+            }
+          ]
+        }
+      },
+      "id": "2", 
+      "name": "Check Provider",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [450, 300]
+    },
+    {
+      "parameters": {
+        "url": "http://gateway:8080/v1/chat/completions",
+        "method": "POST",
+        "authentication": "headerAuth",
+        "options": {},
+        "sendBody": true,
+        "jsonParameters": true,
+        "headerParametersJson": "{\"Authorization\":\"Bearer {{$env.OPENAI_API_KEY}}\",\"Content-Type\":\"application/json\",\"X-RunSafe-Purpose\":\"concierge\"}",
+        "bodyParametersJson": "{\"model\":\"gpt-4o-mini\",\"messages\":[{\"role\":\"system\",\"content\":\"You are a hotel concierge AI. Do not request or include guest passport numbers, credit card details, or sensitive health info. If provided, replace with placeholders.\"},{\"role\":\"user\",\"content\":\"{{$json.query}}\"}]}"
+      },
+      "id": "3",
+      "name": "OpenAI Gateway Call",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "position": [650, 200],
+      "credentials": {}
+    },
+    {
+      "parameters": {
+        "url": "http://gateway:8080/v1/messages",
+        "method": "POST",
+        "authentication": "headerAuth",
+        "options": {},
+        "sendBody": true,
+        "jsonParameters": true,
+        "headerParametersJson": "{\"Authorization\":\"Bearer {{$env.ANTHROPIC_API_KEY}}\",\"Content-Type\":\"application/json\",\"X-RunSafe-Purpose\":\"concierge\"}",
+        "bodyParametersJson": "{\"model\":\"claude-3-sonnet-20240229\",\"max_tokens\":1024,\"messages\":[{\"role\":\"user\",\"content\":\"You are a hotel concierge AI. Do not request or include guest passport numbers, credit card details, or sensitive health info. If provided, replace with placeholders. Guest query: {{$json.query}}\"}]}"
+      },
+      "id": "4",
+      "name": "Anthropic Gateway Call",
+      "type": "n8n-nodes-base.httpRequest", 
+      "typeVersion": 1,
+      "position": [650, 400],
+      "credentials": {}
+    },
+    {
+      "parameters": {
+        "url": "http://gateway:8080/v1/embeddings",
+        "method": "POST",
+        "authentication": "headerAuth",
+        "options": {},
+        "sendBody": true,
+        "jsonParameters": true,
+        "headerParametersJson": "{\"Authorization\":\"Bearer {{$env.OPENAI_API_KEY}}\",\"Content-Type\":\"application/json\",\"X-RunSafe-Purpose\":\"embeddings\"}",
+        "bodyParametersJson": "{\"model\":\"text-embedding-ada-002\",\"input\":\"{{$json.query}}\"}"
+      },
+      "id": "5",
+      "name": "Generate Embeddings",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "position": [850, 300],
+      "credentials": {}
+    },
+    {
+      "parameters": {
+        "options": {},
+        "responseData": "={{$json}}",
+        "responseCode": 200
+      },
+      "id": "6",
+      "name": "Respond to Guest",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [1050, 300]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Check Provider",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Provider": {
+      "main": [
+        [
+          {
+            "node": "OpenAI Gateway Call",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Anthropic Gateway Call",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Gateway Call": {
+      "main": [
+        [
+          {
+            "node": "Generate Embeddings",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Anthropic Gateway Call": {
+      "main": [
+        [
+          {
+            "node": "Respond to Guest", 
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Embeddings": {
+      "main": [
+        [
+          {
+            "node": "Respond to Guest",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  }
+}
