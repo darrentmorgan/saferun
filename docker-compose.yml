@@ -8,9 +8,8 @@ services:
       - N8N_HOST=runsafe-n8n.local
       - N8N_PROTOCOL=http
       - GENERIC_TIMEZONE=Europe/Berlin
-      - HTTP_PROXY=http://gateway:8080
-      - HTTPS_PROXY=http://gateway:8080
-      - NO_PROXY=localhost,127.0.0.1,postgres,gateway,dashboard
+      # Removed proxy - n8n connects directly to AI providers for now
+      # Gateway monitoring will be added in Stage 2
     ports:
       - "5678:5678"
     depends_on:

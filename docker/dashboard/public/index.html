@@ -1,0 +1,443 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RunSafe Dashboard</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif;
+            margin: 0;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: white;
+            padding: 30px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        .header {
+            border-bottom: 2px solid #e74c3c;
+            padding-bottom: 20px;
+            margin-bottom: 30px;
+        }
+        .status {
+            background: #e8f5e8;
+            border: 1px solid #27ae60;
+            padding: 15px;
+            border-radius: 5px;
+            margin: 20px 0;
+        }
+        .coming-soon {
+            background: #fff3cd;
+            border: 1px solid #ffc107;
+            padding: 15px;
+            border-radius: 5px;
+            margin: 20px 0;
+        }
+        .endpoints {
+            background: #f8f9fa;
+            padding: 20px;
+            border-radius: 5px;
+            margin: 20px 0;
+        }
+        code {
+            background: #f1f1f1;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-family: monospace;
+        }
+        ul {
+            line-height: 1.6;
+        }
+        .logs-container {
+            background: #1e1e1e;
+            color: #e0e0e0;
+            border-radius: 5px;
+            margin: 20px 0;
+            max-height: 400px;
+            overflow-y: auto;
+        }
+        .logs-header {
+            background: #333;
+            padding: 10px 15px;
+            border-bottom: 1px solid #555;
+            font-weight: bold;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .logs-content {
+            padding: 0;
+            font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+            font-size: 12px;
+        }
+        .log-entry {
+            padding: 5px 15px;
+            border-bottom: 1px solid #2a2a2a;
+            margin: 0;
+            white-space: nowrap;
+            overflow-x: auto;
+        }
+        .log-entry.info { border-left: 3px solid #2196f3; }
+        .log-entry.error { border-left: 3px solid #f44336; background-color: #2a1f1f; }
+        .log-entry.warn { border-left: 3px solid #ff9800; background-color: #2a2a1f; }
+        .log-timestamp { color: #888; }
+        .log-level { font-weight: bold; }
+        .log-level.info { color: #2196f3; }
+        .log-level.error { color: #f44336; }
+        .log-level.warn { color: #ff9800; }
+        .refresh-btn {
+            background: #4caf50;
+            color: white;
+            border: none;
+            padding: 5px 10px;
+            border-radius: 3px;
+            cursor: pointer;
+            font-size: 12px;
+        }
+        .refresh-btn:hover {
+            background: #45a049;
+        }
+        .filter-controls {
+            display: flex;
+            gap: 15px;
+            align-items: center;
+            padding: 10px 15px;
+            background: #444;
+            border-bottom: 1px solid #555;
+            font-size: 12px;
+        }
+        .filter-group {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .filter-select {
+            background: #333;
+            color: #e0e0e0;
+            border: 1px solid #555;
+            border-radius: 3px;
+            padding: 4px 8px;
+            font-size: 11px;
+        }
+        .filter-checkbox {
+            margin-right: 5px;
+        }
+        .filter-label {
+            color: #ccc;
+            cursor: pointer;
+        }
+        .log-entry.verbose .log-details {
+            display: block;
+            margin-top: 5px;
+            padding: 5px;
+            background: rgba(255,255,255,0.05);
+            border-radius: 3px;
+            font-size: 11px;
+            line-height: 1.3;
+        }
+        .log-entry .log-details {
+            display: none;
+        }
+        .log-highlight.gdpr { 
+            border-left-color: #ff6b35 !important;
+            background-color: #332015 !important;
+        }
+        .stats-bar {
+            display: flex;
+            gap: 20px;
+            padding: 8px 15px;
+            background: #555;
+            font-size: 11px;
+            color: #ccc;
+        }
+        .stat-item {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+        }
+        .stat-count {
+            color: #4caf50;
+            font-weight: bold;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🛡️ RunSafe Dashboard</h1>
+            <p>GDPR-Compliant AI Automation for Hotels</p>
+        </div>
+
+        <div class="status">
+            <h3>✅ Current Status: Stage 1 Complete</h3>
+            <p>Gateway is operational with multi-provider support</p>
+        </div>
+
+        <div class="coming-soon">
+            <h3>🚧 Dashboard Features Coming in Stage 4</h3>
+            <p>Real-time violation tracking, compliance reporting, and audit log visualization will be available after database infrastructure is implemented.</p>
+        </div>
+
+        <div class="endpoints">
+            <h3>🔗 Available Endpoints</h3>
+            <ul>
+                <li><strong>Gateway Health:</strong> <code>http://gateway:8080/health</code></li>
+                <li><strong>API Discovery:</strong> <code>http://gateway:8080/api/endpoints</code></li>
+                <li><strong>OpenAI Chat:</strong> <code>http://gateway:8080/v1/chat/completions</code></li>
+                <li><strong>OpenAI Embeddings:</strong> <code>http://gateway:8080/v1/embeddings</code></li>
+                <li><strong>Anthropic Messages:</strong> <code>http://gateway:8080/v1/messages</code></li>
+            </ul>
+        </div>
+
+        <h3>📋 Implementation Progress</h3>
+        <ul>
+            <li>✅ <strong>Stage 1:</strong> Core Gateway Infrastructure</li>
+            <li>🚧 <strong>Stage 2:</strong> Database & Audit Infrastructure</li>
+            <li>⏳ <strong>Stage 3:</strong> PII Detection Engine</li>
+            <li>⏳ <strong>Stage 4:</strong> Dashboard Frontend</li>
+            <li>⏳ <strong>Stage 5:</strong> Network Tap Monitor</li>
+            <li>⏳ <strong>Stage 6:</strong> Production Hardening</li>
+        </ul>
+
+        <div class="logs-container">
+            <div class="logs-header">
+                <span>🔍 Gateway Logs (Live)</span>
+                <button class="refresh-btn" onclick="refreshLogs()">Refresh</button>
+            </div>
+            <div class="filter-controls">
+                <div class="filter-group">
+                    <label class="filter-label">
+                        <input type="checkbox" class="filter-checkbox" id="filterAI" onchange="applyFilters()">
+                        🛡️ AI Requests Only
+                    </label>
+                </div>
+                <div class="filter-group">
+                    <label class="filter-label">
+                        <input type="checkbox" class="filter-checkbox" id="verboseMode" onchange="toggleVerbose()">
+                        🔍 Verbose Details
+                    </label>
+                </div>
+                <div class="filter-group">
+                    <label class="filter-label">Level:</label>
+                    <select class="filter-select" id="levelFilter" onchange="applyFilters()">
+                        <option value="all">All</option>
+                        <option value="info">Info</option>
+                        <option value="warn">Warning</option>
+                        <option value="error">Error</option>
+                    </select>
+                </div>
+                <div class="filter-group">
+                    <label class="filter-label">Provider:</label>
+                    <select class="filter-select" id="providerFilter" onchange="applyFilters()">
+                        <option value="all">All</option>
+                        <option value="openai">OpenAI</option>
+                        <option value="anthropic">Anthropic</option>
+                    </select>
+                </div>
+            </div>
+            <div class="stats-bar" id="statsBar">
+                <div class="stat-item">
+                    <span>📊 Total:</span>
+                    <span class="stat-count" id="totalCount">0</span>
+                </div>
+                <div class="stat-item">
+                    <span>🛡️ AI Requests:</span>
+                    <span class="stat-count" id="aiCount">0</span>
+                </div>
+                <div class="stat-item">
+                    <span>⚠️ Errors:</span>
+                    <span class="stat-count" id="errorCount">0</span>
+                </div>
+                <div class="stat-item">
+                    <span>🔄 Showing:</span>
+                    <span class="stat-count" id="visibleCount">0</span>
+                </div>
+            </div>
+            <div class="logs-content" id="logsContent">
+                <div class="log-entry info">
+                    <span class="log-timestamp">Loading logs...</span>
+                </div>
+            </div>
+        </div>
+
+        <h3>🧪 Testing</h3>
+        <p>Use n8n at <code>http://localhost:5678</code> to create workflows that call the gateway endpoints above.</p>
+        
+        <div style="margin-top: 40px; color: #666; font-size: 0.9em;">
+            <p>RunSafe Gateway v1.0.0 | GDPR Compliance Platform</p>
+        </div>
+
+        <script>
+            let allLogs = [];
+            let filteredLogs = [];
+
+            function formatTimestamp(timestamp) {
+                return new Date(timestamp).toLocaleString();
+            }
+
+            async function refreshLogs() {
+                try {
+                    const response = await fetch('/api/logs');
+                    if (response.ok) {
+                        const logs = await response.json();
+                        allLogs = logs;
+                        applyFilters();
+                    } else {
+                        displayError('Failed to fetch logs');
+                    }
+                } catch (error) {
+                    displayError('Error fetching logs: ' + error.message);
+                }
+            }
+
+            function isAIRequest(log) {
+                const message = log.message || '';
+                const correlationId = log.correlationId || '';
+                
+                // Check for GDPR AUDIT markers
+                if (message.includes('GDPR AUDIT')) return true;
+                
+                // Check for AI endpoint paths
+                const aiEndpoints = ['/v1/chat/completions', '/v1/embeddings', '/v1/messages'];
+                return aiEndpoints.some(endpoint => 
+                    message.includes(endpoint) || 
+                    log.url?.includes(endpoint) ||
+                    log.endpoint?.includes(endpoint)
+                );
+            }
+
+            function getProvider(log) {
+                const message = log.message || '';
+                if (message.includes('anthropic') || message.includes('Anthropic')) return 'anthropic';
+                if (message.includes('openai') || message.includes('OpenAI')) return 'openai';
+                return 'unknown';
+            }
+
+            function applyFilters() {
+                const filterAI = document.getElementById('filterAI').checked;
+                const levelFilter = document.getElementById('levelFilter').value;
+                const providerFilter = document.getElementById('providerFilter').value;
+                
+                filteredLogs = allLogs.filter(log => {
+                    // AI filter
+                    if (filterAI && !isAIRequest(log)) return false;
+                    
+                    // Level filter
+                    if (levelFilter !== 'all') {
+                        const level = (log.level || 'info').toLowerCase().replace(/\x1b\[[0-9;]*m/g, '');
+                        if (level !== levelFilter) return false;
+                    }
+                    
+                    // Provider filter
+                    if (providerFilter !== 'all') {
+                        const provider = getProvider(log);
+                        if (provider !== providerFilter) return false;
+                    }
+                    
+                    return true;
+                });
+                
+                displayLogs(filteredLogs);
+                updateStats();
+            }
+
+            function toggleVerbose() {
+                const verboseMode = document.getElementById('verboseMode').checked;
+                const logsContent = document.getElementById('logsContent');
+                
+                if (verboseMode) {
+                    logsContent.classList.add('verbose');
+                } else {
+                    logsContent.classList.remove('verbose');
+                }
+            }
+
+            function displayLogs(logs) {
+                const logsContent = document.getElementById('logsContent');
+                const verboseMode = document.getElementById('verboseMode').checked;
+                
+                if (!logs || logs.length === 0) {
+                    logsContent.innerHTML = '<div class="log-entry info"><span class="log-timestamp">No logs match current filters</span></div>';
+                    return;
+                }
+
+                const logEntries = logs.map(log => {
+                    const level = (log.level || 'info').toLowerCase().replace(/\x1b\[[0-9;]*m/g, '');
+                    const timestamp = log.timestamp || new Date().toISOString();
+                    const message = log.message || JSON.stringify(log);
+                    const correlationId = log.correlationId ? ` [${log.correlationId.substring(0, 8)}]` : '';
+                    const isAI = isAIRequest(log);
+                    const provider = getProvider(log);
+                    
+                    // Create verbose details
+                    let details = '';
+                    if (verboseMode) {
+                        const detailsObj = {};
+                        Object.keys(log).forEach(key => {
+                            if (!['timestamp', 'level', 'message', 'correlationId'].includes(key)) {
+                                detailsObj[key] = log[key];
+                            }
+                        });
+                        if (Object.keys(detailsObj).length > 0) {
+                            details = `<div class="log-details">${JSON.stringify(detailsObj, null, 2)}</div>`;
+                        }
+                    }
+                    
+                    const additionalClasses = isAI ? 'log-highlight gdpr' : '';
+                    const aiIndicator = isAI ? '🛡️ ' : '';
+                    const providerBadge = provider !== 'unknown' ? `[${provider.toUpperCase()}] ` : '';
+                    
+                    return `
+                        <div class="log-entry ${level} ${verboseMode ? 'verbose' : ''} ${additionalClasses}">
+                            <span class="log-timestamp">${formatTimestamp(timestamp)}</span>
+                            <span class="log-level ${level}">[${level.toUpperCase()}]</span>
+                            ${correlationId}
+                            ${aiIndicator}${providerBadge}${message}
+                            ${details}
+                        </div>
+                    `;
+                }).join('');
+
+                logsContent.innerHTML = logEntries;
+                logsContent.scrollTop = logsContent.scrollHeight;
+            }
+
+            function updateStats() {
+                const totalCount = allLogs.length;
+                const aiCount = allLogs.filter(isAIRequest).length;
+                const errorCount = allLogs.filter(log => 
+                    (log.level || '').toLowerCase().includes('error')
+                ).length;
+                const visibleCount = filteredLogs.length;
+                
+                document.getElementById('totalCount').textContent = totalCount;
+                document.getElementById('aiCount').textContent = aiCount;
+                document.getElementById('errorCount').textContent = errorCount;
+                document.getElementById('visibleCount').textContent = visibleCount;
+            }
+
+            function displayError(message) {
+                const logsContent = document.getElementById('logsContent');
+                logsContent.innerHTML = `
+                    <div class="log-entry error">
+                        <span class="log-timestamp">${formatTimestamp(new Date().toISOString())}</span>
+                        <span class="log-level error">[ERROR]</span>
+                        ${message}
+                    </div>
+                `;
+            }
+
+            // Auto-refresh logs every 5 seconds
+            setInterval(refreshLogs, 5000);
+
+            // Initial load
+            window.addEventListener('load', refreshLogs);
+        </script>
+    </div>
+</body>
+</html>

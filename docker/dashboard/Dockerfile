@@ -1,46 +1,18 @@
-# RunSafe Dashboard - Compliance Monitoring UI
-FROM node:20-alpine as builder
-
-WORKDIR /app
-
-# Build React dashboard
-COPY <<EOF package.json
-{
-  "name": "runsafe-dashboard",
-  "version": "1.0.0",
-  "private": true,
-  "dependencies": {
-    "react": "^18.2.0",
-    "react-dom": "^18.2.0",
-    "react-scripts": "5.0.1",
-    "axios": "^1.6.2",
-    "recharts": "^2.10.3",
-    "date-fns": "^2.30.0",
-    "@mui/material": "^5.14.18",
-    "@emotion/react": "^11.11.1",
-    "@emotion/styled": "^11.11.0"
-  },
-  "scripts": {
-    "start": "react-scripts start",
-    "build": "react-scripts build"
-  }
-}
-EOF
-
-RUN npm install
-
-# Copy source files
-COPY src/ ./src/
-COPY public/ ./public/
-
-RUN npm run build
-
-# Production stage
+# RunSafe Dashboard - Placeholder Implementation
 FROM nginx:alpine
 
-COPY --from=builder /app/build /usr/share/nginx/html
+WORKDIR /usr/share/nginx/html
+
+# Copy static dashboard files
+COPY public/ .
+
+# Copy nginx configuration
 COPY nginx.conf /etc/nginx/nginx.conf
 
 EXPOSE 8081
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+  CMD curl -f http://localhost:8081/health || exit 1
 
 CMD ["nginx", "-g", "daemon off;"]

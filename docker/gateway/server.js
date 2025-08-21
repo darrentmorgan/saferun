@@ -10,6 +10,30 @@ require('dotenv').config();
 const app = express();
 const PORT = process.env.PORT || 8080;
 
+// In-memory log storage for dashboard display
+let recentLogs = [];
+
+// Custom transport to store logs for dashboard
+class DashboardTransport extends winston.transports.Console {
+  log(info, callback) {
+    // Store in memory for dashboard
+    recentLogs.push({
+      timestamp: info.timestamp,
+      level: info.level,
+      message: info.message,
+      correlationId: info.correlationId,
+      ...info
+    });
+    
+    // Keep only last 100 logs
+    if (recentLogs.length > 100) {
+      recentLogs = recentLogs.slice(-100);
+    }
+    
+    super.log(info, callback);
+  }
+}
+
 // Configure Winston logger
 const logger = winston.createLogger({
   level: process.env.LOG_LEVEL || 'info',
@@ -19,7 +43,7 @@ const logger = winston.createLogger({
     winston.format.json()
   ),
   transports: [
-    new winston.transports.Console({
+    new DashboardTransport({
       format: winston.format.combine(
         winston.format.colorize(),
         winston.format.simple()
@@ -30,8 +54,11 @@ const logger = winston.createLogger({
 
 // Middleware setup
 app.use(cors());
-app.use(bodyParser.json({ limit: '10mb' }));
-app.use(bodyParser.urlencoded({ extended: true }));
+
+// Only parse JSON for our API endpoints, not proxy endpoints
+// This prevents bodyParser from interfering with proxy middleware
+app.use('/api/*', bodyParser.json({ limit: '10mb' }));
+app.use('/health', bodyParser.json({ limit: '10mb' }));
 
 // Request correlation ID middleware
 app.use((req, res, next) => {
@@ -49,10 +76,9 @@ app.use((req, res, next) => {
     method: req.method,
     url: req.url,
     userAgent: req.get('User-Agent'),
-    ip: req.ip
+    ip: req.ip || req.connection.remoteAddress
   });
 
-  // Log response when finished
   res.on('finish', () => {
     const duration = Date.now() - startTime;
     logger.info('Request completed', {
@@ -65,63 +91,135 @@ app.use((req, res, next) => {
   next();
 });
 
-// Health check endpoint
-app.get('/health', (req, res) => {
-  res.json({
-    status: 'healthy',
-    timestamp: new Date().toISOString(),
-    version: '1.0.0',
-    correlationId: req.correlationId
-  });
-});
-
-// Header transformation middleware for Anthropic
+// Transform authentication headers for Anthropic
 const transformAuthForAnthropic = (proxyReq, req, res) => {
-  // Transform Authorization header to x-api-key for Anthropic
   const authHeader = req.get('Authorization');
   if (authHeader && authHeader.startsWith('Bearer ')) {
-    const apiKey = authHeader.substring(7); // Remove 'Bearer ' prefix
+    const apiKey = authHeader.substring(7);
     proxyReq.setHeader('x-api-key', apiKey);
-    proxyReq.removeHeader('Authorization'); // Remove original header
+    proxyReq.removeHeader('Authorization');
+    logger.info('Transformed Bearer token to x-api-key for Anthropic', {
+      correlationId: req.correlationId,
+      hasApiKey: !!apiKey
+    });
   }
-  
-  // Add required Anthropic headers
   proxyReq.setHeader('anthropic-version', '2023-06-01');
-  
-  logger.info('Transformed headers for Anthropic', {
-    correlationId: req.correlationId,
-    hasApiKey: !!proxyReq.getHeader('x-api-key'),
-    anthropicVersion: proxyReq.getHeader('anthropic-version')
-  });
 };
 
-// OpenAI Chat Completions endpoint
-app.use('/v1/chat/completions', createProxyMiddleware({
+// OpenAI Models endpoint  
+app.use('/v1/models', createProxyMiddleware({
   target: 'https://api.openai.com',
   changeOrigin: true,
+  secure: true,
+  timeout: 30000,
+  proxyTimeout: 30000,
+  followRedirects: true,
+  xfwd: false,
+  headers: {
+    'Connection': 'keep-alive',
+    'Accept-Encoding': 'gzip, deflate'
+  },
   onProxyReq: (proxyReq, req, res) => {
-    logger.info('Proxying to OpenAI Chat Completions', {
+    logger.info('Proxying to OpenAI Models', {
       correlationId: req.correlationId,
-      target: 'https://api.openai.com/v1/chat/completions',
+      target: 'https://api.openai.com/v1/models',
       method: req.method,
       hasAuth: !!req.get('Authorization')
     });
   },
   onProxyRes: (proxyRes, req, res) => {
-    logger.info('OpenAI Chat Completions response received', {
+    logger.info('OpenAI Models response received', {
       correlationId: req.correlationId,
       statusCode: proxyRes.statusCode
     });
   },
   onError: (err, req, res) => {
+    logger.error('OpenAI Models proxy error', {
+      correlationId: req.correlationId,
+      error: err.message,
+      code: err.code
+    });
+    
+    let statusCode = 500;
+    if (err.code === 'ECONNRESET' || err.message.includes('socket hang up')) {
+      statusCode = 502;
+    } else if (err.code === 'ETIMEDOUT' || err.message.includes('timeout')) {
+      statusCode = 504;
+    }
+    
+    if (!res.headersSent) {
+      res.status(statusCode).json({
+        error: 'Gateway error',
+        correlationId: req.correlationId
+      });
+    }
+  }
+}));
+
+// OpenAI Chat Completions endpoint
+app.use('/v1/chat/completions', createProxyMiddleware({
+  target: 'https://api.openai.com',
+  changeOrigin: true,
+  secure: true,
+  timeout: 120000, // 2 minutes for chat completions  
+  proxyTimeout: 120000,
+  onProxyReq: (proxyReq, req, res) => {
+    logger.info('GDPR AUDIT - OpenAI Chat Request', {
+      correlationId: req.correlationId,
+      target: 'https://api.openai.com/v1/chat/completions',
+      method: req.method,
+      hasAuth: !!req.get('Authorization'),
+      userAgent: req.get('User-Agent'),
+      contentType: req.get('Content-Type'),
+      contentLength: req.get('Content-Length'),
+      timestamp: new Date().toISOString()
+    });
+  },
+  onProxyRes: (proxyRes, req, res) => {
+    logger.info('GDPR AUDIT - OpenAI Chat Response', {
+      correlationId: req.correlationId,
+      statusCode: proxyRes.statusCode,
+      contentType: proxyRes.headers['content-type'],
+      timestamp: new Date().toISOString()
+    });
+  },
+  onError: (err, req, res) => {
     logger.error('OpenAI Chat Completions proxy error', {
       correlationId: req.correlationId,
-      error: err.message
+      error: err.message,
+      code: err.code,
+      stack: err.stack
     });
-    res.status(500).json({
-      error: 'Gateway error',
-      correlationId: req.correlationId
-    });
+    
+    // Provide more helpful error messages
+    let errorMessage = 'Gateway error';
+    let errorDetail = err.message;
+    let statusCode = 500;
+    
+    if (err.code === 'ECONNRESET' || err.message.includes('socket hang up')) {
+      errorMessage = 'Connection to OpenAI failed';
+      errorDetail = 'Network connection was reset during request';
+      statusCode = 502;
+    } else if (err.code === 'ETIMEDOUT' || err.message.includes('timeout')) {
+      errorMessage = 'Request timeout';
+      errorDetail = 'Request to OpenAI timed out';
+      statusCode = 504;
+    } else if (err.code === 'ENOTFOUND' || err.message.includes('ENOTFOUND')) {
+      errorMessage = 'DNS resolution failed';
+      errorDetail = 'Could not resolve OpenAI API hostname';
+      statusCode = 502;
+    }
+    
+    if (!res.headersSent) {
+      res.status(statusCode).json({
+        error: {
+          message: errorMessage,
+          detail: errorDetail,
+          correlationId: req.correlationId,
+          suggestion: 'Check your OpenAI API key is valid and active'
+        }
+      });
+    }
   }
 }));
 
@@ -129,59 +227,53 @@ app.use('/v1/chat/completions', createProxyMiddleware({
 app.use('/v1/embeddings', createProxyMiddleware({
   target: 'https://api.openai.com',
   changeOrigin: true,
+  secure: true,
+  timeout: 120000,
+  proxyTimeout: 120000,
+  followRedirects: true,
+  xfwd: false,
+  headers: {
+    'Connection': 'keep-alive',
+    'Accept-Encoding': 'gzip, deflate'
+  },
   onProxyReq: (proxyReq, req, res) => {
-    logger.info('Proxying to OpenAI Embeddings', {
+    logger.info('GDPR AUDIT - OpenAI Embeddings Request', {
       correlationId: req.correlationId,
       target: 'https://api.openai.com/v1/embeddings',
       method: req.method,
-      hasAuth: !!req.get('Authorization')
+      hasAuth: !!req.get('Authorization'),
+      contentType: req.get('Content-Type'),
+      contentLength: req.get('Content-Length'),
+      timestamp: new Date().toISOString()
     });
   },
   onProxyRes: (proxyRes, req, res) => {
-    logger.info('OpenAI Embeddings response received', {
+    logger.info('GDPR AUDIT - OpenAI Embeddings Response', {
       correlationId: req.correlationId,
-      statusCode: proxyRes.statusCode
+      statusCode: proxyRes.statusCode,
+      timestamp: new Date().toISOString()
     });
   },
   onError: (err, req, res) => {
     logger.error('OpenAI Embeddings proxy error', {
       correlationId: req.correlationId,
-      error: err.message
+      error: err.message,
+      code: err.code
     });
-    res.status(500).json({
-      error: 'Gateway error',
-      correlationId: req.correlationId
-    });
-  }
-}));
-
-// OpenAI Responses endpoint (New 2025 API)
-app.use('/v1/responses', createProxyMiddleware({
-  target: 'https://api.openai.com',
-  changeOrigin: true,
-  onProxyReq: (proxyReq, req, res) => {
-    logger.info('Proxying to OpenAI Responses', {
-      correlationId: req.correlationId,
-      target: 'https://api.openai.com/v1/responses',
-      method: req.method,
-      hasAuth: !!req.get('Authorization')
-    });
-  },
-  onProxyRes: (proxyRes, req, res) => {
-    logger.info('OpenAI Responses response received', {
-      correlationId: req.correlationId,
-      statusCode: proxyRes.statusCode
-    });
-  },
-  onError: (err, req, res) => {
-    logger.error('OpenAI Responses proxy error', {
-      correlationId: req.correlationId,
-      error: err.message
-    });
-    res.status(500).json({
-      error: 'Gateway error',
-      correlationId: req.correlationId
-    });
+    
+    let statusCode = 500;
+    if (err.code === 'ECONNRESET' || err.message.includes('socket hang up')) {
+      statusCode = 502;
+    } else if (err.code === 'ETIMEDOUT' || err.message.includes('timeout')) {
+      statusCode = 504;
+    }
+    
+    if (!res.headersSent) {
+      res.status(statusCode).json({
+        error: 'Gateway error',
+        correlationId: req.correlationId
+      });
+    }
   }
 }));
 
@@ -190,20 +282,21 @@ app.use('/v1/messages', createProxyMiddleware({
   target: 'https://api.anthropic.com',
   changeOrigin: true,
   onProxyReq: (proxyReq, req, res) => {
-    // Transform authentication headers for Anthropic
     transformAuthForAnthropic(proxyReq, req, res);
     
-    logger.info('Proxying to Anthropic Messages', {
+    logger.info('GDPR AUDIT - Anthropic Messages Request', {
       correlationId: req.correlationId,
       target: 'https://api.anthropic.com/v1/messages',
       method: req.method,
-      hasApiKey: !!proxyReq.getHeader('x-api-key')
+      hasApiKey: !!proxyReq.getHeader('x-api-key'),
+      timestamp: new Date().toISOString()
     });
   },
   onProxyRes: (proxyRes, req, res) => {
-    logger.info('Anthropic Messages response received', {
+    logger.info('GDPR AUDIT - Anthropic Messages Response', {
       correlationId: req.correlationId,
-      statusCode: proxyRes.statusCode
+      statusCode: proxyRes.statusCode,
+      timestamp: new Date().toISOString()
     });
   },
   onError: (err, req, res) => {
@@ -218,69 +311,221 @@ app.use('/v1/messages', createProxyMiddleware({
   }
 }));
 
+// Dashboard logs API endpoint
+app.get('/api/logs', (req, res) => {
+  const limit = parseInt(req.query.limit) || 50;
+  const logs = recentLogs.slice(-limit);
+  
+  logger.info('Dashboard logs requested', {
+    correlationId: req.correlationId,
+    logCount: logs.length,
+    requestedLimit: limit
+  });
+  
+  res.json(logs);
+});
+
 // API endpoints discovery
 app.get('/api/endpoints', (req, res) => {
   res.json({
     gateway: 'RunSafe GDPR Compliance Gateway',
     version: '1.0.0',
     correlationId: req.correlationId,
+    mode: 'api-proxy',
+    usage: {
+      note: 'For Stage 1: Use gateway endpoints directly in n8n workflows',
+      openai_base_url: 'http://gateway:8080 (recommended)',
+      openai_base_url_alternative: 'http://gateway:8080/v1 (also supported)',
+      anthropic_base_url: 'http://gateway:8080/v1'
+    },
     supportedEndpoints: {
       openai: {
         baseUrl: 'https://api.openai.com',
-        endpoints: [
-          {
-            path: '/v1/chat/completions',
-            description: 'Chat completions (GPT models)',
-            authentication: 'Bearer token',
-            gatewayUrl: `http://gateway:8080/v1/chat/completions`
-          },
-          {
-            path: '/v1/embeddings',
-            description: 'Text embeddings',
-            authentication: 'Bearer token',
-            gatewayUrl: `http://gateway:8080/v1/embeddings`
-          },
-          {
-            path: '/v1/responses',
-            description: 'New 2025 Responses API',
-            authentication: 'Bearer token',
-            gatewayUrl: `http://gateway:8080/v1/responses`
-          }
+        monitored: [
+          '/v1/chat/completions',
+          '/v1/embeddings'
+        ],
+        transparent: [
+          '/v1/models'
         ]
       },
       anthropic: {
-        baseUrl: 'https://api.anthropic.com',
-        endpoints: [
-          {
-            path: '/v1/messages',
-            description: 'Claude messages',
-            authentication: 'x-api-key (auto-transformed from Bearer)',
-            gatewayUrl: `http://gateway:8080/v1/messages`,
-            headers: {
-              'anthropic-version': '2023-06-01'
-            }
-          }
+        baseUrl: 'https://api.anthropic.com', 
+        monitored: [
+          '/v1/messages'
         ]
       }
     }
   });
 });
 
-// Test endpoint for development
-app.post('/test-detection', (req, res) => {
-  logger.info('Test detection endpoint called', {
-    correlationId: req.correlationId,
-    body: req.body
-  });
-  
+// Health check endpoint
+app.get('/health', (req, res) => {
   res.json({
-    message: 'Test endpoint - PII detection not yet implemented',
-    correlationId: req.correlationId,
-    receivedData: req.body
+    status: 'healthy',
+    gateway: 'RunSafe GDPR Compliance Gateway',
+    correlationId: req.correlationId
   });
 });
 
-// 404 handler
+// Root-level OpenAI endpoints (fallback for Base URL without /v1)
+app.use('/chat/completions', createProxyMiddleware({
+  target: 'https://api.openai.com/v1',
+  changeOrigin: true,
+  secure: true,
+  timeout: 120000, // 2 minutes for chat completions
+  proxyTimeout: 120000,
+  logLevel: 'debug',
+  onProxyReq: (proxyReq, req, res) => {
+    // Re-stream the body for POST requests
+    if (req.body && req.method === 'POST') {
+      const bodyData = JSON.stringify(req.body);
+      proxyReq.setHeader('Content-Type', 'application/json');
+      proxyReq.setHeader('Content-Length', Buffer.byteLength(bodyData));
+      proxyReq.write(bodyData);
+    }
+    
+    logger.info('GDPR AUDIT - OpenAI Chat Request (root-level)', {
+      correlationId: req.correlationId,
+      target: 'https://api.openai.com/v1/chat/completions',
+      method: req.method,
+      hasAuth: !!req.get('Authorization'),
+      userAgent: req.get('User-Agent'),
+      bodySize: req.body ? JSON.stringify(req.body).length : 0,
+      timestamp: new Date().toISOString()
+    });
+  },
+  onProxyRes: (proxyRes, req, res) => {
+    logger.info('GDPR AUDIT - OpenAI Chat Response (root-level)', {
+      correlationId: req.correlationId,
+      statusCode: proxyRes.statusCode,
+      contentType: proxyRes.headers['content-type'],
+      timestamp: new Date().toISOString()
+    });
+  },
+  onError: (err, req, res) => {
+    logger.error('OpenAI Chat Completions proxy error (root-level)', {
+      correlationId: req.correlationId,
+      error: err.message,
+      code: err.code
+    });
+    
+    if (!res.headersSent) {
+      res.status(502).json({
+        error: {
+          message: 'Connection to OpenAI failed',
+          detail: err.message,
+          correlationId: req.correlationId,
+          suggestion: 'Check your OpenAI API key is valid and active'
+        }
+      });
+    }
+  }
+}));
+
+app.use('/models', createProxyMiddleware({
+  target: 'https://api.openai.com/v1',
+  changeOrigin: true,
+  secure: true,
+  timeout: 30000,
+  proxyTimeout: 30000,
+  followRedirects: true,
+  xfwd: false,
+  headers: {
+    'Connection': 'keep-alive',
+    'Accept-Encoding': 'gzip, deflate'
+  },
+  onProxyReq: (proxyReq, req, res) => {
+    logger.info('Proxying to OpenAI Models (root-level)', {
+      correlationId: req.correlationId,
+      target: 'https://api.openai.com/v1/models',
+      method: req.method,
+      hasAuth: !!req.get('Authorization')
+    });
+  },
+  onProxyRes: (proxyRes, req, res) => {
+    logger.info('OpenAI Models response received (root-level)', {
+      correlationId: req.correlationId,
+      statusCode: proxyRes.statusCode
+    });
+  },
+  onError: (err, req, res) => {
+    logger.error('OpenAI Models proxy error (root-level)', {
+      correlationId: req.correlationId,
+      error: err.message,
+      code: err.code
+    });
+    
+    let statusCode = 500;
+    if (err.code === 'ECONNRESET' || err.message.includes('socket hang up')) {
+      statusCode = 502;
+    } else if (err.code === 'ETIMEDOUT' || err.message.includes('timeout')) {
+      statusCode = 504;
+    }
+    
+    if (!res.headersSent) {
+      res.status(statusCode).json({
+        error: 'Gateway error',
+        correlationId: req.correlationId
+      });
+    }
+  }
+}));
+
+app.use('/embeddings', createProxyMiddleware({
+  target: 'https://api.openai.com/v1',
+  changeOrigin: true,
+  secure: true,
+  timeout: 120000,
+  proxyTimeout: 120000,
+  followRedirects: true,
+  xfwd: false,
+  headers: {
+    'Connection': 'keep-alive',
+    'Accept-Encoding': 'gzip, deflate'
+  },
+  onProxyReq: (proxyReq, req, res) => {
+    logger.info('GDPR AUDIT - OpenAI Embeddings Request (root-level)', {
+      correlationId: req.correlationId,
+      target: 'https://api.openai.com/v1/embeddings',
+      method: req.method,
+      hasAuth: !!req.get('Authorization'),
+      contentType: req.get('Content-Type'),
+      contentLength: req.get('Content-Length'),
+      timestamp: new Date().toISOString()
+    });
+  },
+  onProxyRes: (proxyRes, req, res) => {
+    logger.info('GDPR AUDIT - OpenAI Embeddings Response (root-level)', {
+      correlationId: req.correlationId,
+      statusCode: proxyRes.statusCode,
+      timestamp: new Date().toISOString()
+    });
+  },
+  onError: (err, req, res) => {
+    logger.error('OpenAI Embeddings proxy error (root-level)', {
+      correlationId: req.correlationId,
+      error: err.message,
+      code: err.code
+    });
+    
+    let statusCode = 500;
+    if (err.code === 'ECONNRESET' || err.message.includes('socket hang up')) {
+      statusCode = 502;
+    } else if (err.code === 'ETIMEDOUT' || err.message.includes('timeout')) {
+      statusCode = 504;
+    }
+    
+    if (!res.headersSent) {
+      res.status(statusCode).json({
+        error: 'Gateway error',
+        correlationId: req.correlationId
+      });
+    }
+  }
+}));
+
+// Catch-all for unmatched routes
 app.use('*', (req, res) => {
   logger.warn('Route not found', {
     correlationId: req.correlationId,
@@ -290,39 +535,20 @@ app.use('*', (req, res) => {
   
   res.status(404).json({
     error: 'Route not found',
-    correlationId: req.correlationId
-  });
-});
-
-// Error handler
-app.use((err, req, res, next) => {
-  logger.error('Unhandled error', {
     correlationId: req.correlationId,
-    error: err.message,
-    stack: err.stack
-  });
-  
-  res.status(500).json({
-    error: 'Internal server error',
-    correlationId: req.correlationId
+    suggestion: 'Use /api/endpoints to see available routes',
+    available_base_urls: [
+      'http://gateway:8080 (root level)',
+      'http://gateway:8080/v1 (with /v1 prefix)'
+    ]
   });
 });
 
 // Start server
-app.listen(PORT, '0.0.0.0', () => {
-  logger.info(`RunSafe Gateway started on port ${PORT}`, {
+app.listen(PORT, () => {
+  logger.info('RunSafe Gateway started', {
+    port: PORT,
     environment: process.env.NODE_ENV || 'development',
-    port: PORT
+    mode: 'api-proxy-stage-1'
   });
-});
-
-// Graceful shutdown
-process.on('SIGTERM', () => {
-  logger.info('SIGTERM received, shutting down gracefully');
-  process.exit(0);
-});
-
-process.on('SIGINT', () => {
-  logger.info('SIGINT received, shutting down gracefully');
-  process.exit(0);
 });
