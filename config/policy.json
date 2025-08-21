@@ -1,0 +1,14 @@
+{
+  "gdpr": {
+    "mode": "monitor",
+    "max_retention_days": 1095,
+    "block_special_categories": ["health", "biometric", "religion", "sexual_orientation"],
+    "mask_fields": ["credit_card", "iban", "passport_number", "national_id", "email", "phone"],
+    "allowed_purposes": ["booking", "support", "billing", "concierge"],
+    "actions": {
+      "on_high": "block",
+      "on_medium": "redact",
+      "on_low": "allow_with_note"
+    }
+  }
+}

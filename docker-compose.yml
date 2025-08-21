@@ -1,0 +1,70 @@
+version: "3.9"
+
+services:
+  n8n:
+    image: n8nio/n8n:latest
+    environment:
+      - N8N_ENCRYPTION_KEY=${N8N_ENCRYPTION_KEY}
+      - N8N_HOST=runsafe-n8n.local
+      - N8N_PROTOCOL=http
+      - GENERIC_TIMEZONE=Europe/Berlin
+      - HTTP_PROXY=http://gateway:8080
+      - HTTPS_PROXY=http://gateway:8080
+      - NO_PROXY=localhost,127.0.0.1,postgres,gateway,dashboard
+    ports:
+      - "5678:5678"
+    depends_on:
+      - postgres
+      - gateway
+    networks:
+      - runsafe
+
+  gateway:
+    image: runsafe/gateway:latest
+    environment:
+      - RUNSAFE_TENANT_KEY=${RUNSAFE_TENANT_KEY}
+      - POLICY_MODE=${POLICY_MODE:-monitor}
+      - DB_URL=postgres://postgres:postgres@postgres:5432/audit
+      - ALLOWLIST_HOSTS=api.openai.com,api.anthropic.com
+    ports:
+      - "8080:8080"
+    depends_on:
+      - postgres
+    networks:
+      - runsafe
+
+  tap:
+    image: runsafe/tap:latest
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    network_mode: "service:n8n"
+    environment:
+      - DB_URL=postgres://postgres:postgres@postgres:5432/audit
+
+  postgres:
+    image: postgres:16
+    environment:
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_DB=audit
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    networks:
+      - runsafe
+
+  dashboard:
+    image: runsafe/dashboard:latest
+    environment:
+      - DB_URL=postgres://postgres:postgres@postgres:5432/audit
+    ports:
+      - "8081:8081"
+    depends_on:
+      - postgres
+    networks:
+      - runsafe
+
+networks:
+  runsafe:
+
+volumes:
+  pgdata:

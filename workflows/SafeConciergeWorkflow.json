@@ -1,0 +1,80 @@
+{
+  "name": "Safe Concierge Bot",
+  "nodes": [
+    {
+      "parameters": {
+        "path": "concierge",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "1",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [
+        250,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "url": "http://gateway:8080/v1/chat/completions",
+        "method": "POST",
+        "authentication": "headerAuth",
+        "options": {},
+        "sendBody": true,
+        "jsonParameters": true,
+        "headerParametersJson": "{\"Authorization\":\"Bearer {{$env.RUNSAFE_TENANT_KEY}}\",\"Content-Type\":\"application/json\",\"X-RunSafe-Purpose\":\"concierge\"}",
+        "bodyParametersJson": "{\"model\":\"gpt-4o-mini\",\"messages\":[{\"role\":\"system\",\"content\":\"You are a hotel concierge AI. Do not request or include guest passport numbers, credit card details, or sensitive health info. If provided, replace with placeholders.\"},{\"role\":\"user\",\"content\":\"{{$json.query}}\"}]}"
+      },
+      "id": "2",
+      "name": "RunSafe Gateway Call",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "position": [
+        600,
+        300
+      ],
+      "credentials": {}
+    },
+    {
+      "parameters": {
+        "options": {},
+        "responseData": "={{$json}}",
+        "responseCode": 200
+      },
+      "id": "3",
+      "name": "Respond to Guest",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        950,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "RunSafe Gateway Call",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "RunSafe Gateway Call": {
+      "main": [
+        [
+          {
+            "node": "Respond to Guest",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  }
+}
