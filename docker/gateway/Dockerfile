@@ -3,37 +3,30 @@ FROM node:20-alpine
 
 WORKDIR /app
 
-# Install dependencies
+# Install system dependencies
 RUN apk add --no-cache \
     curl \
-    jq \
-    postgresql-client
+    jq
 
-# Create gateway application
-COPY <<EOF package.json
-{
-  "name": "runsafe-gateway",
-  "version": "1.0.0",
-  "description": "RunSafe Gateway for GDPR-compliant AI API calls",
-  "main": "server.js",
-  "dependencies": {
-    "express": "^4.18.2",
-    "http-proxy-middleware": "^2.0.6",
-    "pg": "^8.11.3",
-    "body-parser": "^1.20.2",
-    "winston": "^3.11.0",
-    "dotenv": "^16.3.1"
-  }
-}
-EOF
-
-RUN npm install
+# Copy package.json and install dependencies
+COPY package.json .
+RUN npm install --production
 
 # Copy gateway server code
 COPY server.js .
-COPY pii-detector.js .
-COPY policy-engine.js .
+
+# Create non-root user
+RUN addgroup -g 1001 -S gateway && \
+    adduser -S gateway -u 1001 -G gateway
+
+# Change ownership
+RUN chown -R gateway:gateway /app
+USER gateway
 
 EXPOSE 8080
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+  CMD curl -f http://localhost:8080/health || exit 1
 
 CMD ["node", "server.js"]
