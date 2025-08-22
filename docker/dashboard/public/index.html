@@ -53,7 +53,8 @@
         ul {
             line-height: 1.6;
         }
-        .logs-container {
+        .logs-container,
+        .pii-violations-container {
             background: #1e1e1e;
             color: #e0e0e0;
             border-radius: 5px;
@@ -63,7 +64,8 @@
             width: 100%;
             box-sizing: border-box;
         }
-        .logs-header {
+        .logs-header,
+        .pii-header {
             background: #333;
             padding: 10px 15px;
             border-bottom: 1px solid #555;
@@ -71,6 +73,62 @@
             display: flex;
             justify-content: space-between;
             align-items: center;
+        }
+        .pii-violations-container {
+            max-height: 300px;
+        }
+        .pii-stats {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 15px;
+            padding: 10px 15px;
+            background: #2a2a2a;
+            border-bottom: 1px solid #555;
+        }
+        .violations-content {
+            padding: 10px;
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+            line-height: 1.4;
+        }
+        .violation-entry {
+            padding: 8px;
+            margin: 5px 0;
+            border-radius: 4px;
+            border-left: 4px solid;
+        }
+        .violation-high {
+            background: #4a1a1a;
+            border-left-color: #dc3545;
+        }
+        .violation-medium {
+            background: #4a3a1a;
+            border-left-color: #ffc107;
+        }
+        .violation-low {
+            background: #1a3a1a;
+            border-left-color: #28a745;
+        }
+        .violation-type {
+            font-weight: bold;
+            color: #fff;
+        }
+        .violation-text {
+            font-family: monospace;
+            background: #000;
+            padding: 2px 6px;
+            border-radius: 3px;
+            color: #ff6b6b;
+        }
+        .violation-redacted {
+            color: #666;
+        }
+        .high-risk { color: #dc3545; }
+        .medium-risk { color: #ffc107; }
+        .low-risk { color: #28a745; }
+        .violation-count { 
+            font-weight: bold; 
+            color: #ff6b6b;
         }
         .logs-content {
             padding: 0;
@@ -231,13 +289,36 @@
         </div>
 
         <div class="status">
-            <h3>✅ Current Status: Stage 1 Complete</h3>
-            <p>Gateway is operational with multi-provider support</p>
+            <h3>✅ Current Status: Stage 3 Complete</h3>
+            <p>Gateway is operational with PII detection and GDPR monitoring</p>
         </div>
 
-        <div class="coming-soon">
-            <h3>🚧 Dashboard Features Coming in Stage 4</h3>
-            <p>Real-time violation tracking, compliance reporting, and audit log visualization will be available after database infrastructure is implemented.</p>
+        <div class="pii-violations-container">
+            <div class="pii-header">
+                <h3>🚨 PII Violations (Last 24 Hours)</h3>
+                <button class="refresh-btn" onclick="refreshViolations()">Refresh</button>
+            </div>
+            <div class="pii-stats">
+                <div class="stat-item">
+                    <span>⚠️ Total Violations:</span>
+                    <span class="stat-count violation-count" id="violationCount">0</span>
+                </div>
+                <div class="stat-item">
+                    <span>🔴 High Risk:</span>
+                    <span class="stat-count high-risk" id="highRiskCount">0</span>
+                </div>
+                <div class="stat-item">
+                    <span>🟡 Medium Risk:</span>
+                    <span class="stat-count medium-risk" id="mediumRiskCount">0</span>
+                </div>
+                <div class="stat-item">
+                    <span>🟢 Low Risk:</span>
+                    <span class="stat-count low-risk" id="lowRiskCount">0</span>
+                </div>
+            </div>
+            <div class="violations-content" id="violationsContent">
+                <div class="loading">Loading violations...</div>
+            </div>
         </div>
 
         <div class="endpoints">
@@ -494,11 +575,91 @@
                 `;
             }
 
+            // PII Violations functions
+            async function refreshViolations() {
+                try {
+                    const response = await fetch('/api/violations?limit=20');
+                    if (response.ok) {
+                        const data = await response.json();
+                        displayViolations(data.violations);
+                        updateViolationStats(data.violations);
+                    } else {
+                        displayViolationError('Failed to fetch violations');
+                    }
+                } catch (error) {
+                    displayViolationError('Error fetching violations: ' + error.message);
+                }
+            }
+
+            function displayViolations(violations) {
+                const violationsContent = document.getElementById('violationsContent');
+                
+                if (!violations || violations.length === 0) {
+                    violationsContent.innerHTML = '<div style="text-align: center; padding: 20px; color: #666;">No PII violations detected in the last 24 hours</div>';
+                    return;
+                }
+
+                const violationEntries = violations.map(violation => {
+                    const riskClass = `violation-${violation.risk_level || 'low'}`;
+                    const detectedAt = new Date(violation.detected_at).toLocaleString();
+                    const gdprArticle = violation.gdpr_article || 'Unknown';
+                    
+                    return `
+                        <div class="violation-entry ${riskClass}">
+                            <div class="violation-header">
+                                <span class="violation-type">${violation.violation_type.toUpperCase()}</span>
+                                <span style="float: right; font-size: 11px; color: #888;">${detectedAt}</span>
+                            </div>
+                            <div style="margin: 5px 0;">
+                                <strong>Detected:</strong> <span class="violation-text">${violation.detected_text}</span>
+                                <strong>→ Redacted:</strong> <span class="violation-redacted">${violation.redacted_text}</span>
+                            </div>
+                            <div style="font-size: 11px; color: #aaa;">
+                                <strong>Category:</strong> ${violation.violation_category} | 
+                                <strong>Risk:</strong> ${violation.risk_level || 'unknown'} | 
+                                <strong>GDPR:</strong> ${gdprArticle} |
+                                <strong>Source:</strong> ${violation.data_source}
+                                ${violation.field_path ? ` | <strong>Field:</strong> ${violation.field_path}` : ''}
+                            </div>
+                        </div>
+                    `;
+                }).join('');
+
+                violationsContent.innerHTML = violationEntries;
+            }
+
+            function updateViolationStats(violations) {
+                const total = violations.length;
+                const high = violations.filter(v => v.risk_level === 'high').length;
+                const medium = violations.filter(v => v.risk_level === 'medium').length;
+                const low = violations.filter(v => v.risk_level === 'low').length;
+
+                document.getElementById('violationCount').textContent = total;
+                document.getElementById('highRiskCount').textContent = high;
+                document.getElementById('mediumRiskCount').textContent = medium;
+                document.getElementById('lowRiskCount').textContent = low;
+            }
+
+            function displayViolationError(message) {
+                const violationsContent = document.getElementById('violationsContent');
+                violationsContent.innerHTML = `
+                    <div style="color: #dc3545; text-align: center; padding: 20px;">
+                        ⚠️ ${message}
+                    </div>
+                `;
+            }
+
             // Auto-refresh logs every 5 seconds
             setInterval(refreshLogs, 5000);
+            
+            // Auto-refresh violations every 30 seconds
+            setInterval(refreshViolations, 30000);
 
             // Initial load
-            window.addEventListener('load', refreshLogs);
+            window.addEventListener('load', function() {
+                refreshLogs();
+                refreshViolations();
+            });
         </script>
     </div>
 </body>

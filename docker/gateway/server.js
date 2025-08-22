@@ -6,12 +6,16 @@ const { v4: uuidv4 } = require('uuid');
 const { createProxyMiddleware } = require('http-proxy-middleware');
 require('dotenv').config();
 
-// Import database client
+// Import database client and PII detector
 const db = require('./db');
+const PIIDetector = require('./pii-detector');
 
 // Initialize Express app
 const app = express();
 const PORT = process.env.PORT || 8080;
+
+// Initialize PII detector
+const piiDetector = new PIIDetector('/app/config/policy.json');
 
 // In-memory log storage for dashboard display
 let recentLogs = [];
@@ -58,10 +62,10 @@ const logger = winston.createLogger({
 // Middleware setup
 app.use(cors());
 
-// Only parse JSON for our API endpoints, not proxy endpoints
-// This prevents bodyParser from interfering with proxy middleware
+// Parse JSON for API endpoints only (NOT for proxy endpoints to avoid conflicts)
 app.use('/api/*', bodyParser.json({ limit: '10mb' }));
 app.use('/health', bodyParser.json({ limit: '10mb' }));
+// NOTE: Removed /v1/* body parser to avoid conflicts with proxy middleware
 
 // Request correlation ID middleware
 app.use((req, res, next) => {
@@ -69,6 +73,9 @@ app.use((req, res, next) => {
   res.set('X-Correlation-ID', req.correlationId);
   next();
 });
+
+// PII Detection middleware moved here - must be BEFORE proxy definitions
+const getRawBody = require('raw-body');
 
 // Enhanced request logging middleware with database integration
 app.use((req, res, next) => {
@@ -112,7 +119,10 @@ app.use((req, res, next) => {
         const provider = req.url.includes('/messages') ? 'anthropic' : 'openai';
         const endpoint = req.url;
         
-        await db.logAuditEntry({
+        // Check for PII data to mark personal data flag
+        const hasPersonalData = req.piiViolations && req.piiViolations.length > 0;
+        
+        const auditRecord = await db.logAuditEntry({
           correlationId: req.correlationId,
           method: req.method,
           endpoint,
@@ -127,16 +137,54 @@ app.use((req, res, next) => {
           responseTimeMs: duration,
           requestSizeBytes: req.get('Content-Length') ? parseInt(req.get('Content-Length')) : null,
           responseSizeBytes: null,
+          isPersonalData: hasPersonalData,
           metadata: {
             userAgent: req.get('User-Agent'),
-            timestamp: new Date().toISOString()
+            timestamp: new Date().toISOString(),
+            pii_violations_count: req.piiViolations ? req.piiViolations.length : 0
           }
         });
+        
+        // Log PII violations to database if any were detected
+        if (req.piiViolations && req.piiViolations.length > 0) {
+          for (const violation of req.piiViolations) {
+            try {
+              await db.logPiiViolation({
+                auditId: auditRecord.audit_id,
+                violationType: violation.type,
+                violationCategory: violation.category,
+                detectedText: violation.detected_text,
+                redactedText: violation.redacted_text,
+                confidenceScore: violation.confidence_score,
+                fieldPath: violation.field_path,
+                dataSource: violation.data_source,
+                gdprArticle: violation.gdpr_article,
+                legalBasis: violation.category === 'special_category' ? 'Explicit consent required' : 'Legitimate interest'
+              });
+            } catch (violationError) {
+              logger.error('Failed to log PII violation to database', {
+                correlationId: req.correlationId,
+                violationType: violation.type,
+                error: violationError.message
+              });
+            }
+          }
+          
+          logger.warn('PII violations logged to database', {
+            correlationId: req.correlationId,
+            provider,
+            endpoint,
+            violationsCount: req.piiViolations.length,
+            riskLevels: req.piiViolations.map(v => v.risk_level)
+          });
+        }
         
         logger.info('AI request logged to database', {
           correlationId: req.correlationId,
           provider,
-          endpoint
+          endpoint,
+          hasPersonalData,
+          violationsCount: req.piiViolations ? req.piiViolations.length : 0
         });
       } catch (error) {
         logger.error('Failed to log AI request to database', {
@@ -164,6 +212,73 @@ const transformAuthForAnthropic = (proxyReq, req, res) => {
   }
   proxyReq.setHeader('anthropic-version', '2023-06-01');
 };
+
+// PII Detection middleware for AI proxy endpoints
+// This middleware parses and stores the body for PII scanning while preserving it for proxying
+app.use(['/v1/chat/completions', '/v1/embeddings', '/v1/messages', '/chat/completions', '/embeddings'], async (req, res, next) => {
+  logger.info('PII middleware triggered', {
+    correlationId: req.correlationId,
+    method: req.method,
+    url: req.url,
+    contentType: req.get('Content-Type')
+  });
+  
+  if (req.method === 'POST' || req.method === 'PUT') {
+    try {
+      // Get raw body buffer
+      const buffer = await getRawBody(req, {
+        length: req.get('Content-Length'),
+        limit: '10mb',
+        encoding: 'utf8'
+      });
+      
+      const bodyString = buffer.toString();
+      
+      // Parse JSON body for PII scanning
+      req.body = JSON.parse(bodyString);
+      // Store raw body for proxy streaming
+      req.rawBody = bodyString;
+      
+      // Initialize PII tracking and scan immediately
+      req.piiViolations = [];
+      if (req.body && typeof req.body === 'object') {
+        const requestViolations = piiDetector.scanObject(req.body, 'request_body', req.correlationId);
+        req.piiViolations.push(...requestViolations);
+        
+        if (requestViolations.length > 0) {
+          logger.warn('PII detected in AI request (pre-proxy)', {
+            correlationId: req.correlationId,
+            violations: requestViolations.length,
+            types: requestViolations.map(v => v.type),
+            riskLevels: requestViolations.map(v => v.risk_level)
+          });
+        }
+      }
+      
+      logger.info('Body parsed for PII scanning', {
+        correlationId: req.correlationId,
+        bodySize: bodyString.length,
+        hasBody: !!req.body,
+        piiViolations: req.piiViolations.length
+      });
+      
+      next();
+    } catch (error) {
+      logger.error('Failed to parse request body for PII scanning', {
+        correlationId: req.correlationId,
+        error: error.message
+      });
+      // Continue anyway
+      req.body = {};
+      req.piiViolations = [];
+      req.rawBody = '';
+      next();
+    }
+  } else {
+    req.piiViolations = [];
+    next();
+  }
+});
 
 // OpenAI Models endpoint  
 app.use('/v1/models', createProxyMiddleware({
@@ -223,6 +338,36 @@ app.use('/v1/chat/completions', createProxyMiddleware({
   timeout: 120000, // 2 minutes for chat completions  
   proxyTimeout: 120000,
   onProxyReq: (proxyReq, req, res) => {
+    // DEBUG: Log that we're in the proxy handler (PII scanning already done in middleware)
+    logger.info('DEBUG: onProxyReq called for chat completions', {
+      correlationId: req.correlationId,
+      hasBody: !!req.body,
+      hasRawBody: !!req.rawBody,
+      piiViolationsCount: req.piiViolations ? req.piiViolations.length : 0,
+      method: req.method,
+      contentType: req.get('Content-Type')
+    });
+    
+    // Re-stream the raw body for POST/PUT requests (PII already scanned in middleware)
+    if (req.rawBody && (req.method === 'POST' || req.method === 'PUT')) {
+      try {
+        proxyReq.setHeader('Content-Type', 'application/json');
+        proxyReq.setHeader('Content-Length', Buffer.byteLength(req.rawBody));
+        proxyReq.write(req.rawBody);
+        
+        logger.debug('Request body re-streamed to proxy', {
+          correlationId: req.correlationId,
+          bodySize: req.rawBody.length,
+          piiViolations: req.piiViolations ? req.piiViolations.length : 0
+        });
+      } catch (error) {
+        logger.error('Failed to re-stream body to proxy', {
+          correlationId: req.correlationId,
+          error: error.message
+        });
+      }
+    }
+    
     logger.info('GDPR AUDIT - OpenAI Chat Request', {
       correlationId: req.correlationId,
       target: 'https://api.openai.com/v1/chat/completions',
@@ -231,10 +376,74 @@ app.use('/v1/chat/completions', createProxyMiddleware({
       userAgent: req.get('User-Agent'),
       contentType: req.get('Content-Type'),
       contentLength: req.get('Content-Length'),
+      piiViolations: req.piiViolations ? req.piiViolations.length : 0,
       timestamp: new Date().toISOString()
     });
   },
   onProxyRes: (proxyRes, req, res) => {
+    // Initialize response violations array if not exists
+    if (!req.piiViolations) req.piiViolations = [];
+    
+    // Buffer response data for PII scanning
+    let responseBody = '';
+    proxyRes.on('data', (chunk) => {
+      responseBody += chunk.toString();
+    });
+    
+    proxyRes.on('end', async () => {
+      // Scan response for PII
+      if (responseBody && proxyRes.headers['content-type']?.includes('application/json')) {
+        try {
+          const responseData = JSON.parse(responseBody);
+          const responseViolations = piiDetector.scanObject(responseData, 'response_body', req.correlationId);
+          req.piiViolations.push(...responseViolations);
+          
+          if (responseViolations.length > 0) {
+            logger.warn('PII detected in AI response', {
+              correlationId: req.correlationId,
+              violations: responseViolations.length,
+              types: responseViolations.map(v => v.type),
+              riskLevels: responseViolations.map(v => v.risk_level)
+            });
+          }
+        } catch (parseError) {
+          logger.debug('Could not parse response for PII scanning', {
+            correlationId: req.correlationId,
+            error: parseError.message
+          });
+        }
+      }
+      
+      // Log all PII violations to database
+      if (req.piiViolations.length > 0) {
+        try {
+          for (const violation of req.piiViolations) {
+            await db.logPIIViolation(
+              req.correlationId,
+              violation.type,
+              violation.category,
+              violation.detected_text,
+              violation.redacted_text,
+              violation.confidence_score,
+              violation.field_path,
+              violation.data_source,
+              violation.gdpr_article
+            );
+          }
+          
+          logger.info('PII violations logged to database', {
+            correlationId: req.correlationId,
+            violations: req.piiViolations.length
+          });
+        } catch (dbError) {
+          logger.error('Failed to log PII violations to database', {
+            correlationId: req.correlationId,
+            error: dbError.message
+          });
+        }
+      }
+    });
+    
     logger.info('GDPR AUDIT - OpenAI Chat Response', {
       correlationId: req.correlationId,
       statusCode: proxyRes.statusCode,
@@ -502,6 +711,53 @@ app.get('/api/violations', async (req, res) => {
   }
 });
 
+// PII Detection status and statistics
+app.get('/api/pii-status', (req, res) => {
+  try {
+    const stats = piiDetector.getStats();
+    
+    logger.info('PII detection status requested', {
+      correlationId: req.correlationId,
+      enabled: stats.enabled
+    });
+    
+    res.json({
+      detection_engine: {
+        enabled: stats.enabled,
+        patterns_loaded: stats.patterns_loaded,
+        confidence_threshold: stats.confidence_threshold,
+        categories: stats.categories
+      },
+      policy: {
+        loaded: stats.policy_loaded,
+        file_path: '/app/config/policy.json'
+      },
+      compliance: {
+        gdpr_articles: ['Article 6', 'Article 9'],
+        risk_levels: ['low', 'medium', 'high'],
+        data_categories: ['contact', 'financial', 'identifier', 'special_category']
+      },
+      features: {
+        request_scanning: true,
+        response_scanning: true,
+        database_logging: true,
+        whitelist_filtering: true,
+        format_preserving_redaction: true
+      }
+    });
+  } catch (error) {
+    logger.error('Failed to get PII detection status', {
+      correlationId: req.correlationId,
+      error: error.message
+    });
+    
+    res.status(500).json({
+      error: 'Failed to get PII detection status',
+      correlationId: req.correlationId
+    });
+  }
+});
+
 // API endpoints discovery
 app.get('/api/endpoints', (req, res) => {
   res.json({
@@ -580,12 +836,27 @@ app.use('/chat/completions', createProxyMiddleware({
   proxyTimeout: 120000,
   logLevel: 'debug',
   onProxyReq: (proxyReq, req, res) => {
-    // Re-stream the body for POST requests
-    if (req.body && req.method === 'POST') {
-      const bodyData = JSON.stringify(req.body);
-      proxyReq.setHeader('Content-Type', 'application/json');
-      proxyReq.setHeader('Content-Length', Buffer.byteLength(bodyData));
-      proxyReq.write(bodyData);
+    // DEBUG: Log that we're in the root-level proxy handler (PII scanning already done in middleware)
+    logger.info('DEBUG: onProxyReq called for chat completions (root-level)', {
+      correlationId: req.correlationId,
+      hasBody: !!req.body,
+      hasRawBody: !!req.rawBody,
+      piiViolationsCount: req.piiViolations ? req.piiViolations.length : 0,
+      method: req.method
+    });
+    
+    // Re-stream the raw body for POST requests (PII already scanned in middleware)
+    if (req.rawBody && req.method === 'POST') {
+      try {
+        proxyReq.setHeader('Content-Type', 'application/json');
+        proxyReq.setHeader('Content-Length', Buffer.byteLength(req.rawBody));
+        proxyReq.write(req.rawBody);
+      } catch (error) {
+        logger.error('Failed to re-stream body to proxy (root-level)', {
+          correlationId: req.correlationId,
+          error: error.message
+        });
+      }
     }
     
     logger.info('GDPR AUDIT - OpenAI Chat Request (root-level)', {
@@ -594,7 +865,8 @@ app.use('/chat/completions', createProxyMiddleware({
       method: req.method,
       hasAuth: !!req.get('Authorization'),
       userAgent: req.get('User-Agent'),
-      bodySize: req.body ? JSON.stringify(req.body).length : 0,
+      bodySize: req.rawBody ? req.rawBody.length : 0,
+      piiViolations: req.piiViolations ? req.piiViolations.length : 0,
       timestamp: new Date().toISOString()
     });
   },

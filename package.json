@@ -1,0 +1,30 @@
+{
+  "name": "saferun",
+  "version": "1.0.0",
+  "description": "RunSafe provides a secure, monitored environment for hotels to leverage AI automation while maintaining GDPR compliance. By wrapping n8n workflows in a compliance layer, RunSafe ensures visibility, monitoring, and audit logs for all data flowing to AI providers.",
+  "main": "test-dashboard-layout.js",
+  "directories": {
+    "doc": "docs"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/darrentmorgan/saferun.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/darrentmorgan/saferun/issues"
+  },
+  "homepage": "https://github.com/darrentmorgan/saferun#readme",
+  "dependencies": {
+    "playwright": "^1.55.0"
+  },
+  "devDependencies": {
+    "axios": "^1.11.0"
+  }
+}

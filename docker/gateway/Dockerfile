@@ -15,6 +15,11 @@ RUN npm install --production
 # Copy gateway server code
 COPY server.js .
 COPY db.js .
+COPY pii-detector.js .
+
+# Create config directory and copy policy
+RUN mkdir -p /app/config
+COPY policy.json /app/config/policy.json
 
 # Create non-root user
 RUN addgroup -g 1001 -S gateway && \
