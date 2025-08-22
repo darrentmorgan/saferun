@@ -6,6 +6,9 @@ const { v4: uuidv4 } = require('uuid');
 const { createProxyMiddleware } = require('http-proxy-middleware');
 require('dotenv').config();
 
+// Import database client
+const db = require('./db');
+
 // Initialize Express app
 const app = express();
 const PORT = process.env.PORT || 8080;
@@ -67,9 +70,10 @@ app.use((req, res, next) => {
   next();
 });
 
-// Request logging middleware
+// Enhanced request logging middleware with database integration
 app.use((req, res, next) => {
   const startTime = Date.now();
+  req.startTime = startTime;
   
   logger.info('Incoming request', {
     correlationId: req.correlationId,
@@ -79,13 +83,68 @@ app.use((req, res, next) => {
     ip: req.ip || req.connection.remoteAddress
   });
 
-  res.on('finish', () => {
+  // Capture request data for AI endpoints
+  if (req.url.includes('/chat/completions') || req.url.includes('/embeddings') || req.url.includes('/messages')) {
+    req.isAIRequest = true;
+    req.capturedRequestBody = null;
+    req.capturedResponseBody = null;
+    
+    // Store original request data
+    const originalSend = res.send;
+    res.send = function(data) {
+      req.capturedResponseBody = data;
+      return originalSend.call(this, data);
+    };
+  }
+
+  res.on('finish', async () => {
     const duration = Date.now() - startTime;
+    
     logger.info('Request completed', {
       correlationId: req.correlationId,
       statusCode: res.statusCode,
       duration: `${duration}ms`
     });
+
+    // Log AI requests to database
+    if (req.isAIRequest) {
+      try {
+        const provider = req.url.includes('/messages') ? 'anthropic' : 'openai';
+        const endpoint = req.url;
+        
+        await db.logAuditEntry({
+          correlationId: req.correlationId,
+          method: req.method,
+          endpoint,
+          provider,
+          userAgent: req.get('User-Agent'),
+          clientIp: req.ip || req.connection.remoteAddress,
+          requestHeaders: req.headers,
+          requestBody: req.body || {},
+          responseStatus: res.statusCode,
+          responseHeaders: res.getHeaders(),
+          responseBody: {},
+          responseTimeMs: duration,
+          requestSizeBytes: req.get('Content-Length') ? parseInt(req.get('Content-Length')) : null,
+          responseSizeBytes: null,
+          metadata: {
+            userAgent: req.get('User-Agent'),
+            timestamp: new Date().toISOString()
+          }
+        });
+        
+        logger.info('AI request logged to database', {
+          correlationId: req.correlationId,
+          provider,
+          endpoint
+        });
+      } catch (error) {
+        logger.error('Failed to log AI request to database', {
+          correlationId: req.correlationId,
+          error: error.message
+        });
+      }
+    }
   });
 
   next();
@@ -311,18 +370,136 @@ app.use('/v1/messages', createProxyMiddleware({
   }
 }));
 
-// Dashboard logs API endpoint
-app.get('/api/logs', (req, res) => {
-  const limit = parseInt(req.query.limit) || 50;
-  const logs = recentLogs.slice(-limit);
-  
-  logger.info('Dashboard logs requested', {
-    correlationId: req.correlationId,
-    logCount: logs.length,
-    requestedLimit: limit
-  });
-  
-  res.json(logs);
+// Dashboard logs API endpoint - enhanced with database integration
+app.get('/api/logs', async (req, res) => {
+  try {
+    const limit = parseInt(req.query.limit) || 50;
+    const source = req.query.source || 'memory'; // 'memory' or 'database'
+    
+    let logs;
+    
+    if (source === 'database') {
+      // Get logs from database
+      const dbLogs = await db.getRecentAuditLogs({ limit });
+      logs = dbLogs.map(log => ({
+        timestamp: log.audit_timestamp,
+        level: 'info',
+        message: `${log.method} ${log.endpoint} - ${log.response_status}`,
+        correlationId: log.correlation_id,
+        method: log.method,
+        endpoint: log.endpoint,
+        provider: log.provider,
+        responseStatus: log.response_status,
+        responseTime: log.response_time_ms ? `${log.response_time_ms}ms` : null,
+        isPersonalData: log.is_personal_data,
+        errorMessage: log.error_message
+      }));
+    } else {
+      // Get logs from memory (existing behavior)
+      logs = recentLogs.slice(-limit);
+    }
+    
+    logger.info('Dashboard logs requested', {
+      correlationId: req.correlationId,
+      logCount: logs.length,
+      requestedLimit: limit,
+      source
+    });
+    
+    res.json(logs);
+  } catch (error) {
+    logger.error('Failed to retrieve logs', {
+      correlationId: req.correlationId,
+      error: error.message
+    });
+    
+    res.status(500).json({
+      error: 'Failed to retrieve logs',
+      correlationId: req.correlationId
+    });
+  }
+});
+
+// Database audit logs API
+app.get('/api/audit-logs', async (req, res) => {
+  try {
+    const limit = parseInt(req.query.limit) || 50;
+    const provider = req.query.provider || null;
+    const timeRange = req.query.timeRange || '24 hours';
+    
+    const auditLogs = await db.getRecentAuditLogs({
+      limit,
+      provider,
+      timeRange
+    });
+    
+    logger.info('Audit logs retrieved from database', {
+      correlationId: req.correlationId,
+      count: auditLogs.length,
+      provider,
+      timeRange
+    });
+    
+    res.json({
+      logs: auditLogs,
+      metadata: {
+        count: auditLogs.length,
+        limit,
+        provider,
+        timeRange,
+        source: 'database'
+      }
+    });
+  } catch (error) {
+    logger.error('Failed to retrieve audit logs', {
+      correlationId: req.correlationId,
+      error: error.message
+    });
+    
+    res.status(500).json({
+      error: 'Failed to retrieve audit logs',
+      correlationId: req.correlationId
+    });
+  }
+});
+
+// PII violations API
+app.get('/api/violations', async (req, res) => {
+  try {
+    const limit = parseInt(req.query.limit) || 50;
+    const timeRange = req.query.timeRange || '24 hours';
+    
+    const violations = await db.getRecentViolations({
+      limit,
+      timeRange
+    });
+    
+    logger.info('PII violations retrieved from database', {
+      correlationId: req.correlationId,
+      count: violations.length,
+      timeRange
+    });
+    
+    res.json({
+      violations,
+      metadata: {
+        count: violations.length,
+        limit,
+        timeRange,
+        source: 'database'
+      }
+    });
+  } catch (error) {
+    logger.error('Failed to retrieve PII violations', {
+      correlationId: req.correlationId,
+      error: error.message
+    });
+    
+    res.status(500).json({
+      error: 'Failed to retrieve PII violations',
+      correlationId: req.correlationId
+    });
+  }
 });
 
 // API endpoints discovery
@@ -359,13 +536,39 @@ app.get('/api/endpoints', (req, res) => {
   });
 });
 
-// Health check endpoint
-app.get('/health', (req, res) => {
-  res.json({
-    status: 'healthy',
-    gateway: 'RunSafe GDPR Compliance Gateway',
-    correlationId: req.correlationId
-  });
+// Health check endpoint with database status
+app.get('/health', async (req, res) => {
+  try {
+    const dbHealth = await db.healthCheck();
+    
+    res.json({
+      status: dbHealth.healthy ? 'healthy' : 'degraded',
+      gateway: 'RunSafe GDPR Compliance Gateway',
+      correlationId: req.correlationId,
+      database: {
+        status: dbHealth.healthy ? 'connected' : 'disconnected',
+        timestamp: dbHealth.timestamp,
+        error: dbHealth.error || null
+      },
+      features: {
+        audit_logging: dbHealth.healthy,
+        in_memory_logs: true,
+        pii_detection: false // Stage 3
+      }
+    });
+  } catch (error) {
+    logger.error('Health check failed', {
+      correlationId: req.correlationId,
+      error: error.message
+    });
+    
+    res.status(503).json({
+      status: 'unhealthy',
+      gateway: 'RunSafe GDPR Compliance Gateway',
+      correlationId: req.correlationId,
+      error: error.message
+    });
+  }
 });
 
 // Root-level OpenAI endpoints (fallback for Base URL without /v1)

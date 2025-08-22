@@ -14,6 +14,7 @@ RUN npm install --production
 
 # Copy gateway server code
 COPY server.js .
+COPY db.js .
 
 # Create non-root user
 RUN addgroup -g 1001 -S gateway && \
