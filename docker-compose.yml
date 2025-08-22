@@ -53,6 +53,9 @@ services:
       - runsafe
 
   dashboard:
+    build:
+      context: ./docker/dashboard
+      dockerfile: Dockerfile
     image: runsafe/dashboard:latest
     environment:
       - DB_URL=postgres://postgres:postgres@postgres:5432/audit
