@@ -1,0 +1,129 @@
+{
+  "timestamp": "2025-08-22T11:49:46.429Z",
+  "tests": [
+    {
+      "name": "Dashboard Overview",
+      "url": "http://localhost:8081/#dashboard",
+      "status": "failed",
+      "issues": [
+        "No KPI cards found on dashboard"
+      ],
+      "screenshots": [
+        "dashboard-overview-1755863390649.png"
+      ]
+    },
+    {
+      "name": "Live Logs Page",
+      "url": "http://localhost:8081/#logs",
+      "status": "passed",
+      "issues": [],
+      "screenshots": [
+        "logs-page-1755863394348.png"
+      ]
+    },
+    {
+      "name": "Violations Page",
+      "url": "http://localhost:8081/#violations",
+      "status": "passed",
+      "issues": [],
+      "screenshots": [
+        "violations-page-1755863397939.png"
+      ]
+    },
+    {
+      "name": "Navigation",
+      "status": "failed",
+      "issues": [
+        "No navigation links found"
+      ],
+      "screenshots": [
+        "navigation-1755863399545.png"
+      ]
+    },
+    {
+      "name": "Responsive Behavior",
+      "status": "passed",
+      "issues": [],
+      "screenshots": [
+        "mobile-view-1755863400635.png",
+        "tablet-view-1755863401702.png"
+      ]
+    }
+  ],
+  "consoleErrors": [
+    {
+      "type": "console",
+      "message": "Failed to load resource: the server responded with a status of 404 (Not Found)",
+      "timestamp": "2025-08-22T11:49:46.538Z"
+    },
+    {
+      "type": "console",
+      "message": "Failed to load resource: the server responded with a status of 404 (Not Found)",
+      "timestamp": "2025-08-22T11:49:46.542Z"
+    },
+    {
+      "type": "console",
+      "message": "Failed to fetch dashboard stats: Error: API request failed: 404 Not Found\n    at Li (http://localhost:8081/assets/index-CZcUbbnj.js:40:116901)\n    at async Object.getStats (http://localhost:8081/assets/index-CZcUbbnj.js:40:118272)\n    at async http://localhost:8081/assets/index-CZcUbbnj.js:40:119848",
+      "timestamp": "2025-08-22T11:49:46.543Z"
+    },
+    {
+      "type": "console",
+      "message": "TypeError: Cannot read properties of undefined (reading 'filter')\n    at $C (http://localhost:8081/assets/index-CZcUbbnj.js:80:42912)\n    at Vu (http://localhost:8081/assets/index-CZcUbbnj.js:38:16994)\n    at La (http://localhost:8081/assets/index-CZcUbbnj.js:40:3139)\n    at zh (http://localhost:8081/assets/index-CZcUbbnj.js:40:44692)\n    at Ih (http://localhost:8081/assets/index-CZcUbbnj.js:40:39699)\n    at c0 (http://localhost:8081/assets/index-CZcUbbnj.js:40:39627)\n    at _i (http://localhost:8081/assets/index-CZcUbbnj.js:40:39481)\n    at Wa (http://localhost:8081/assets/index-CZcUbbnj.js:40:35863)\n    at Oh (http://localhost:8081/assets/index-CZcUbbnj.js:40:34814)\n    at E (http://localhost:8081/assets/index-CZcUbbnj.js:25:1562)",
+      "timestamp": "2025-08-22T11:49:50.858Z"
+    }
+  ],
+  "networkErrors": [],
+  "jsErrors": [
+    {
+      "type": "javascript",
+      "message": "Cannot read properties of undefined (reading 'filter')",
+      "stack": "TypeError: Cannot read properties of undefined (reading 'filter')\n    at $C (http://localhost:8081/assets/index-CZcUbbnj.js:80:42912)\n    at Vu (http://localhost:8081/assets/index-CZcUbbnj.js:38:16994)\n    at La (http://localhost:8081/assets/index-CZcUbbnj.js:40:3139)\n    at zh (http://localhost:8081/assets/index-CZcUbbnj.js:40:44692)\n    at Ih (http://localhost:8081/assets/index-CZcUbbnj.js:40:39699)\n    at c0 (http://localhost:8081/assets/index-CZcUbbnj.js:40:39627)\n    at _i (http://localhost:8081/assets/index-CZcUbbnj.js:40:39481)\n    at Wa (http://localhost:8081/assets/index-CZcUbbnj.js:40:35863)\n    at Oh (http://localhost:8081/assets/index-CZcUbbnj.js:40:34814)\n    at E (http://localhost:8081/assets/index-CZcUbbnj.js:25:1562)",
+      "timestamp": "2025-08-22T11:49:50.858Z"
+    }
+  ],
+  "apiResponses": [
+    {
+      "url": "http://localhost:8081/",
+      "status": 200,
+      "statusText": "OK",
+      "timestamp": "2025-08-22T11:49:46.487Z"
+    },
+    {
+      "url": "http://localhost:8081/assets/index-DsyQdFZl.css",
+      "status": 200,
+      "statusText": "OK",
+      "timestamp": "2025-08-22T11:49:46.500Z"
+    },
+    {
+      "url": "http://localhost:8081/assets/index-CZcUbbnj.js",
+      "status": 200,
+      "statusText": "OK",
+      "timestamp": "2025-08-22T11:49:46.507Z"
+    },
+    {
+      "url": "http://localhost:8081/vite.svg",
+      "status": 404,
+      "statusText": "Not Found",
+      "timestamp": "2025-08-22T11:49:46.538Z"
+    },
+    {
+      "url": "http://localhost:8081/api/stats",
+      "status": 404,
+      "statusText": "Not Found",
+      "timestamp": "2025-08-22T11:49:46.542Z"
+    },
+    {
+      "url": "http://localhost:8081/api/violations?limit=3",
+      "status": 200,
+      "statusText": "OK",
+      "timestamp": "2025-08-22T11:49:46.544Z"
+    },
+    {
+      "url": "http://localhost:8081/api/logs?limit=100",
+      "status": 200,
+      "statusText": "OK",
+      "timestamp": "2025-08-22T11:49:50.856Z"
+    }
+  ],
+  "screenshots": []
+}

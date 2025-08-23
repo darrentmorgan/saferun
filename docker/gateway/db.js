@@ -266,7 +266,14 @@ async function getRecentViolations(options = {}) {
   const query = `
     SELECT 
       v.violation_id, v.violation_type, v.violation_category, v.detected_at,
-      v.confidence_score, v.data_source, a.correlation_id, a.endpoint, a.provider
+      v.detected_text, v.redacted_text, v.confidence_score, v.field_path,
+      v.data_source, v.gdpr_article, v.legal_basis,
+      a.correlation_id, a.endpoint, a.provider,
+      CASE 
+        WHEN v.confidence_score >= 0.8 THEN 'high'
+        WHEN v.confidence_score >= 0.6 THEN 'medium'
+        ELSE 'low'
+      END as risk_level
     FROM pii_violations v
     JOIN audit_logs a ON v.audit_id = a.audit_id
     WHERE v.detected_at >= NOW() - INTERVAL '${timeRange}'

@@ -1,0 +1,243 @@
+# Page snapshot
+
+```yaml
+- generic:
+  - generic:
+    - generic:
+      - generic:
+        - generic:
+          - generic:
+            - generic:
+              - generic:
+                - img
+                - generic:
+                  - heading [level=1]: RunSafe
+                  - paragraph: GDPR Dashboard
+            - navigation:
+              - link:
+                - /url: "#dashboard"
+                - img
+                - generic: Dashboard
+              - link:
+                - /url: "#violations"
+                - img
+                - generic: Violations
+              - link:
+                - /url: "#logs"
+                - img
+                - generic: Live Logs
+              - link:
+                - /url: "#activity"
+                - img
+                - generic: Activity
+              - link:
+                - /url: "#settings"
+                - img
+                - generic: Settings
+              - link:
+                - /url: "#help"
+                - img
+                - generic: Help
+            - generic:
+              - generic:
+                - generic: Gateway Online
+        - generic:
+          - banner:
+            - generic:
+              - generic:
+                - button:
+                  - img
+                - generic:
+                  - navigation:
+                    - generic: "Last updated: 4:31:09 PM"
+              - generic:
+                - button:
+                  - img
+                  - text: Refresh
+                - button:
+                  - img
+                  - text: Export
+          - main:
+            - generic:
+              - generic:
+                - generic:
+                  - generic:
+                    - img
+                    - heading [level=1]: Live Gateway Logs
+                    - generic: Live
+                  - generic:
+                    - button:
+                      - img
+                      - text: Pause
+                    - button:
+                      - img
+                      - text: Export
+                - generic:
+                  - generic:
+                    - heading [level=3]:
+                      - img
+                      - text: Filters
+                  - generic:
+                    - generic:
+                      - generic:
+                        - generic: "Log Level:"
+                        - combobox:
+                          - generic: All Levels
+                          - img
+                      - generic:
+                        - generic: "Provider:"
+                        - combobox [expanded]:
+                          - generic: All Providers
+                          - img
+                      - generic:
+                        - checkbox
+                        - generic: AI Requests Only
+                - generic:
+                  - generic:
+                    - generic:
+                      - heading [level=3]: Gateway Activity (10 entries)
+                      - generic: Updates every 5 seconds
+                  - generic:
+                    - generic:
+                      - generic:
+                        - generic:
+                          - generic:
+                            - table:
+                              - rowgroup:
+                                - row:
+                                  - cell: Timestamp
+                                  - cell: Level
+                                  - cell: Message
+                                  - cell: Provider
+                                  - cell: Status
+                                  - cell: Duration
+                                  - cell: Correlation
+                              - rowgroup:
+                                - row:
+                                  - cell: 16:31:35
+                                  - cell:
+                                    - generic: INFO
+                                  - cell:
+                                    - generic: Rate limit warning
+                                  - cell:
+                                    - generic: OPENAI
+                                  - cell:
+                                    - generic: "502"
+                                  - cell: 492ms
+                                  - cell: q7z37...
+                                - row:
+                                  - cell: 16:31:30
+                                  - cell:
+                                    - generic: INFO
+                                  - cell:
+                                    - generic: PII detected and redacted
+                                  - cell:
+                                    - generic: OPENAI
+                                  - cell:
+                                    - generic: "200"
+                                  - cell: 771ms
+                                  - cell: 3jhjxe...
+                                - row:
+                                  - cell: 16:31:25
+                                  - cell:
+                                    - generic: WARN
+                                  - cell:
+                                    - generic: Connection timeout - retrying
+                                  - cell:
+                                    - generic: ANTHROPIC
+                                  - cell:
+                                    - generic: "200"
+                                  - cell: 896ms
+                                  - cell: jagg5...
+                                - row:
+                                  - cell: 16:31:20
+                                  - cell:
+                                    - generic: INFO
+                                  - cell:
+                                    - generic: Gateway health check passed
+                                  - cell:
+                                    - generic: OPENAI
+                                  - cell:
+                                    - generic: "200"
+                                  - cell: 417ms
+                                  - cell: vvavc5...
+                                - row:
+                                  - cell: 16:31:15
+                                  - cell:
+                                    - generic: WARN
+                                  - cell:
+                                    - generic: Rate limit warning
+                                  - cell:
+                                    - generic: OPENAI
+                                  - cell:
+                                    - generic: "200"
+                                  - cell: 479ms
+                                  - cell: p5wc5b...
+                                - row:
+                                  - cell: 16:29:06
+                                  - cell:
+                                    - generic: INFO
+                                  - cell:
+                                    - generic: AI request processed successfully
+                                  - cell:
+                                    - generic: OPENAI
+                                  - cell:
+                                    - generic: "200"
+                                  - cell: 234ms
+                                  - cell: abc123...
+                                - row:
+                                  - cell: 16:26:06
+                                  - cell:
+                                    - generic: WARN
+                                  - cell:
+                                    - generic: PII detected in request - credit card number redacted
+                                  - cell:
+                                    - generic: OPENAI
+                                  - cell:
+                                    - generic: "200"
+                                  - cell: 456ms
+                                  - cell: def456...
+                                - row:
+                                  - cell: 16:23:06
+                                  - cell:
+                                    - generic: ERROR
+                                  - cell:
+                                    - generic: Failed to connect to AI provider - retrying
+                                  - cell:
+                                    - generic: ANTHROPIC
+                                  - cell:
+                                    - generic: "502"
+                                  - cell: 5000ms
+                                  - cell: ghi789...
+                                - row:
+                                  - cell: 16:19:06
+                                  - cell:
+                                    - generic: INFO
+                                  - cell:
+                                    - generic: Gateway health check passed
+                                  - cell
+                                  - cell:
+                                    - generic: "200"
+                                  - cell: 12ms
+                                  - cell: ...
+                                - row:
+                                  - cell: 16:16:06
+                                  - cell:
+                                    - generic: WARN
+                                  - cell:
+                                    - generic: Rate limit approaching for provider
+                                  - cell:
+                                    - generic: OPENAI
+                                  - cell:
+                                    - generic: "200"
+                                  - cell: 123ms
+                                  - cell: jkl012...
+  - listbox [ref=e1]:
+    - option "All Providers" [active] [selected] [ref=e2]:
+      - img [ref=e5]
+      - generic [ref=e7]: All Providers
+    - option "OpenAI" [ref=e8]:
+      - generic [ref=e10]: OpenAI
+    - option "Anthropic" [ref=e11]:
+      - generic [ref=e13]: Anthropic
+```

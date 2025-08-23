@@ -17,6 +17,9 @@ services:
       - runsafe
 
   gateway:
+    build:
+      context: ./docker/gateway
+      dockerfile: Dockerfile
     image: runsafe/gateway:latest
     environment:
       - RUNSAFE_TENANT_KEY=${RUNSAFE_TENANT_KEY}
@@ -52,14 +55,13 @@ services:
 
   dashboard:
     build:
-      context: ./docker/dashboard
+      context: ./docker/dashboard-v2
       dockerfile: Dockerfile
     image: runsafe/dashboard:latest
-    environment:
-      - DB_URL=postgres://postgres:postgres@postgres:5432/audit
     ports:
       - "8081:8081"
     depends_on:
+      - gateway
       - postgres
     networks:
       - runsafe

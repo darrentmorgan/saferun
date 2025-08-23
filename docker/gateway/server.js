@@ -1000,6 +1000,495 @@ app.use('/embeddings', createProxyMiddleware({
   }
 }));
 
+// Export violations as CSV
+app.get('/api/export/violations/csv', async (req, res) => {
+  try {
+    const {
+      riskLevel = 'all',
+      violationType = 'all',
+      provider = 'all',
+      gdprArticle = 'all',
+      timeRange = '30 days'
+    } = req.query;
+
+    logger.info('CSV export requested', {
+      correlationId: req.correlationId,
+      filters: { riskLevel, violationType, provider, gdprArticle, timeRange }
+    });
+
+    // Get violations data with same filtering as violations API
+    const violations = await db.getRecentViolations({
+      limit: 10000, // Export all violations
+      timeRange
+    });
+
+    // Apply additional filters
+    let filteredViolations = violations;
+    if (riskLevel !== 'all') {
+      filteredViolations = filteredViolations.filter(v => v.risk_level === riskLevel);
+    }
+    if (violationType !== 'all') {
+      filteredViolations = filteredViolations.filter(v => v.violation_type === violationType);
+    }
+    if (provider !== 'all') {
+      filteredViolations = filteredViolations.filter(v => v.provider === provider);
+    }
+    if (gdprArticle !== 'all') {
+      filteredViolations = filteredViolations.filter(v => v.gdpr_article === gdprArticle);
+    }
+
+    // Generate CSV content
+    const csvHeaders = [
+      'Violation ID',
+      'Detected At',
+      'Violation Type',
+      'Violation Category', 
+      'Risk Level',
+      'Detected Text',
+      'Redacted Text',
+      'Confidence Score',
+      'Field Path',
+      'Data Source',
+      'GDPR Article',
+      'Legal Basis',
+      'Correlation ID',
+      'Endpoint',
+      'Provider'
+    ];
+
+    let csvContent = csvHeaders.join(',') + '\n';
+
+    filteredViolations.forEach(violation => {
+      const row = [
+        violation.violation_id,
+        violation.detected_at,
+        violation.violation_type,
+        violation.violation_category,
+        violation.risk_level,
+        `"${(violation.detected_text || '').replace(/"/g, '""')}"`,
+        `"${(violation.redacted_text || '').replace(/"/g, '""')}"`,
+        violation.confidence_score || '',
+        `"${(violation.field_path || '').replace(/"/g, '""')}"`,
+        violation.data_source,
+        violation.gdpr_article || '',
+        `"${(violation.legal_basis || '').replace(/"/g, '""')}"`,
+        violation.correlation_id,
+        violation.endpoint,
+        violation.provider
+      ];
+      csvContent += row.join(',') + '\n';
+    });
+
+    // Set CSV headers
+    const timestamp = new Date().toISOString().split('T')[0];
+    const filename = `runsafe-violations-${timestamp}.csv`;
+    
+    res.setHeader('Content-Type', 'text/csv');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Pragma', 'no-cache');
+
+    logger.info('CSV export completed', {
+      correlationId: req.correlationId,
+      violationCount: filteredViolations.length,
+      filename
+    });
+
+    res.send(csvContent);
+
+  } catch (error) {
+    logger.error('CSV export failed', {
+      correlationId: req.correlationId,
+      error: error.message
+    });
+
+    res.status(500).json({
+      error: 'Failed to export violations as CSV',
+      correlationId: req.correlationId,
+      message: error.message
+    });
+  }
+});
+
+// Export violations as PDF (basic HTML to PDF conversion)
+app.get('/api/export/violations/pdf', async (req, res) => {
+  try {
+    const {
+      riskLevel = 'all',
+      violationType = 'all', 
+      provider = 'all',
+      gdprArticle = 'all',
+      timeRange = '30 days'
+    } = req.query;
+
+    logger.info('PDF export requested', {
+      correlationId: req.correlationId,
+      filters: { riskLevel, violationType, provider, gdprArticle, timeRange }
+    });
+
+    // Get violations data
+    const violations = await db.getRecentViolations({
+      limit: 10000,
+      timeRange
+    });
+
+    // Apply filters (same as CSV)
+    let filteredViolations = violations;
+    if (riskLevel !== 'all') {
+      filteredViolations = filteredViolations.filter(v => v.risk_level === riskLevel);
+    }
+    if (violationType !== 'all') {
+      filteredViolations = filteredViolations.filter(v => v.violation_type === violationType);
+    }
+    if (provider !== 'all') {
+      filteredViolations = filteredViolations.filter(v => v.provider === provider);
+    }
+    if (gdprArticle !== 'all') {
+      filteredViolations = filteredViolations.filter(v => v.gdpr_article === gdprArticle);
+    }
+
+    // Calculate statistics
+    const stats = {
+      total: filteredViolations.length,
+      high: filteredViolations.filter(v => v.risk_level === 'high').length,
+      medium: filteredViolations.filter(v => v.risk_level === 'medium').length,
+      low: filteredViolations.filter(v => v.risk_level === 'low').length,
+      byType: {}
+    };
+
+    filteredViolations.forEach(v => {
+      stats.byType[v.violation_type] = (stats.byType[v.violation_type] || 0) + 1;
+    });
+
+    // Generate HTML content for PDF
+    const reportDate = new Date().toISOString().split('T')[0];
+    const htmlContent = `
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <meta charset="utf-8">
+        <title>RunSafe GDPR Compliance Report</title>
+        <style>
+            body { font-family: Arial, sans-serif; margin: 20px; }
+            .header { border-bottom: 2px solid #333; padding-bottom: 10px; margin-bottom: 20px; }
+            .stats { display: flex; gap: 20px; margin: 20px 0; }
+            .stat-card { border: 1px solid #ddd; padding: 15px; border-radius: 5px; min-width: 120px; }
+            .high-risk { background-color: #fee; border-color: #fcc; }
+            .medium-risk { background-color: #fef5e7; border-color: #f4b942; }
+            .low-risk { background-color: #f0f8ff; border-color: #87ceeb; }
+            .violations-table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+            .violations-table th, .violations-table td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+            .violations-table th { background-color: #f2f2f2; font-weight: bold; }
+            .risk-high { background-color: #fee; }
+            .risk-medium { background-color: #fef5e7; }
+            .risk-low { background-color: #f0f8ff; }
+            .footer { margin-top: 40px; padding-top: 20px; border-top: 1px solid #ddd; font-size: 12px; color: #666; }
+        </style>
+    </head>
+    <body>
+        <div class="header">
+            <h1>RunSafe GDPR Compliance Report</h1>
+            <p><strong>Generated:</strong> ${reportDate}</p>
+            <p><strong>Time Range:</strong> ${timeRange}</p>
+            <p><strong>Filters:</strong> Risk Level: ${riskLevel}, Type: ${violationType}, Provider: ${provider}, GDPR Article: ${gdprArticle}</p>
+        </div>
+        
+        <div class="stats">
+            <div class="stat-card">
+                <h3>Total Violations</h3>
+                <h2>${stats.total}</h2>
+            </div>
+            <div class="stat-card high-risk">
+                <h3>High Risk</h3>
+                <h2>${stats.high}</h2>
+            </div>
+            <div class="stat-card medium-risk">
+                <h3>Medium Risk</h3>
+                <h2>${stats.medium}</h2>
+            </div>
+            <div class="stat-card low-risk">
+                <h3>Low Risk</h3>
+                <h2>${stats.low}</h2>
+            </div>
+        </div>
+
+        <h2>Violation Details</h2>
+        <table class="violations-table">
+            <thead>
+                <tr>
+                    <th>Date</th>
+                    <th>Type</th>
+                    <th>Risk</th>
+                    <th>Provider</th>
+                    <th>Detected Data</th>
+                    <th>GDPR Article</th>
+                    <th>Confidence</th>
+                </tr>
+            </thead>
+            <tbody>
+                ${filteredViolations.map(v => `
+                    <tr class="risk-${v.risk_level}">
+                        <td>${new Date(v.detected_at).toLocaleDateString()}</td>
+                        <td>${v.violation_type}</td>
+                        <td>${v.risk_level.toUpperCase()}</td>
+                        <td>${v.provider}</td>
+                        <td>${v.redacted_text || v.detected_text || 'N/A'}</td>
+                        <td>${v.gdpr_article || 'N/A'}</td>
+                        <td>${v.confidence_score ? (v.confidence_score * 100).toFixed(1) + '%' : 'N/A'}</td>
+                    </tr>
+                `).join('')}
+            </tbody>
+        </table>
+
+        <div class="footer">
+            <p><strong>RunSafe GDPR Compliance Gateway</strong></p>
+            <p>This report contains sensitive PII detection data. Handle according to your organization's data protection policies.</p>
+            <p>Report ID: ${req.correlationId}</p>
+        </div>
+    </body>
+    </html>`;
+
+    // Set PDF headers  
+    const timestamp = new Date().toISOString().split('T')[0];
+    const filename = `runsafe-compliance-report-${timestamp}.html`;
+    
+    res.setHeader('Content-Type', 'text/html');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Pragma', 'no-cache');
+
+    logger.info('PDF export completed (HTML format)', {
+      correlationId: req.correlationId,
+      violationCount: filteredViolations.length,
+      filename
+    });
+
+    res.send(htmlContent);
+
+  } catch (error) {
+    logger.error('PDF export failed', {
+      correlationId: req.correlationId,
+      error: error.message
+    });
+
+    res.status(500).json({
+      error: 'Failed to export violations as PDF',
+      correlationId: req.correlationId,
+      message: error.message
+    });
+  }
+});
+
+// GDPR Article 30 compliance report
+app.get('/api/export/gdpr-article-30', async (req, res) => {
+  try {
+    const {
+      timeRange = '30 days',
+      organizationName = 'Hotel Organization',
+      controllerName = 'Data Protection Officer',
+      reportingPeriod = new Date().toISOString().split('T')[0]
+    } = req.query;
+
+    logger.info('GDPR Article 30 report requested', {
+      correlationId: req.correlationId,
+      timeRange,
+      organizationName
+    });
+
+    // Get all violations for the time period
+    const violations = await db.getRecentViolations({
+      limit: 10000,
+      timeRange
+    });
+
+    // Analyze violations by type and legal basis
+    const violationStats = {};
+    const legalBasisStats = {};
+    let totalPersonalDataRequests = 0;
+
+    violations.forEach(violation => {
+      // Count by violation type
+      if (!violationStats[violation.violation_type]) {
+        violationStats[violation.violation_type] = {
+          count: 0,
+          gdprArticle: violation.gdpr_article,
+          dataCategory: violation.violation_category,
+          examples: []
+        };
+      }
+      violationStats[violation.violation_type].count++;
+      violationStats[violation.violation_type].examples.push(violation.redacted_text || '[REDACTED]');
+
+      // Count by legal basis
+      const basis = violation.legal_basis || 'Not specified';
+      legalBasisStats[basis] = (legalBasisStats[basis] || 0) + 1;
+      
+      totalPersonalDataRequests++;
+    });
+
+    // Generate Article 30 compliant report
+    const article30Report = {
+      reportMetadata: {
+        reportTitle: 'GDPR Article 30 - Record of Processing Activities',
+        organizationName,
+        controllerName,
+        reportingPeriod,
+        timeRange,
+        generatedDate: new Date().toISOString(),
+        correlationId: req.correlationId
+      },
+      
+      processingActivity: {
+        activityName: 'AI-Powered Hotel Guest Services',
+        activityDescription: 'Automated guest service interactions using AI providers (OpenAI, Anthropic) for concierge, booking, and customer support services',
+        legalBasisForProcessing: Object.keys(legalBasisStats),
+        dataController: {
+          name: organizationName,
+          contact: controllerName,
+          representative: 'IT Department'
+        }
+      },
+
+      dataProcessingSummary: {
+        totalRequests: totalPersonalDataRequests,
+        timePeriod: timeRange,
+        dataTypes: Object.keys(violationStats).map(type => ({
+          dataType: type,
+          count: violationStats[type].count,
+          gdprArticle: violationStats[type].gdprArticle,
+          category: violationStats[type].dataCategory,
+          legalBasis: violations.find(v => v.violation_type === type)?.legal_basis,
+          retentionPeriod: '3 years (audit logs)',
+          examples: violationStats[type].examples.slice(0, 3)
+        }))
+      },
+
+      technicalMeasures: {
+        dataProtectionMeasures: [
+          'Real-time PII detection and redaction',
+          'Immutable audit logs with cryptographic signatures',
+          'Correlation ID tracking for full request tracing',
+          'Automatic risk level classification',
+          'GDPR compliance monitoring dashboard'
+        ],
+        dataProcessors: [
+          {
+            name: 'OpenAI',
+            location: 'United States',
+            adequacyDecision: 'Data Processing Agreement required',
+            dataTransferred: violations.filter(v => v.provider === 'openai').length + ' requests'
+          },
+          {
+            name: 'Anthropic',
+            location: 'United States', 
+            adequacyDecision: 'Data Processing Agreement required',
+            dataTransferred: violations.filter(v => v.provider === 'anthropic').length + ' requests'
+          }
+        ]
+      },
+
+      riskAssessment: {
+        highRiskViolations: violations.filter(v => v.risk_level === 'high').length,
+        mediumRiskViolations: violations.filter(v => v.risk_level === 'medium').length,
+        lowRiskViolations: violations.filter(v => v.risk_level === 'low').length,
+        
+        specialCategoryData: {
+          detected: violations.filter(v => v.gdpr_article === 'Article 9').length,
+          types: [...new Set(violations.filter(v => v.gdpr_article === 'Article 9').map(v => v.violation_type))],
+          additionalSafeguards: [
+            'Explicit consent verification required for Article 9 data',
+            'Enhanced monitoring for special category personal data',
+            'Automatic blocking recommended for health and biometric data'
+          ]
+        }
+      },
+
+      complianceStatus: {
+        monitoringEnabled: true,
+        auditTrailComplete: true,
+        dataSubjectRights: {
+          accessRight: 'Supported via audit log exports',
+          rectificationRight: 'Manual process required',
+          erasureRight: 'Supported with 30-day retention override',
+          portabilityRight: 'Supported via CSV/PDF exports'
+        },
+        recommendedActions: [
+          violations.filter(v => v.risk_level === 'high').length > 0 ? 
+            'Immediate review required for high-risk violations' : 
+            'Continue monitoring current low-risk operations',
+          violations.filter(v => v.gdpr_article === 'Article 9').length > 0 ?
+            'Implement additional safeguards for special category data' :
+            'Standard safeguards sufficient for current data types',
+          'Regular compliance audits recommended every 90 days'
+        ]
+      }
+    };
+
+    // Set headers for JSON report
+    const filename = `gdpr-article-30-report-${reportingPeriod}.json`;
+    res.setHeader('Content-Type', 'application/json');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.setHeader('Cache-Control', 'no-cache');
+
+    logger.info('GDPR Article 30 report generated', {
+      correlationId: req.correlationId,
+      totalViolations: totalPersonalDataRequests,
+      highRiskCount: violations.filter(v => v.risk_level === 'high').length,
+      filename
+    });
+
+    res.json(article30Report);
+
+  } catch (error) {
+    logger.error('GDPR Article 30 report generation failed', {
+      correlationId: req.correlationId,
+      error: error.message
+    });
+
+    res.status(500).json({
+      error: 'Failed to generate GDPR Article 30 report',
+      correlationId: req.correlationId,
+      message: error.message
+    });
+  }
+});
+
+// Health check endpoint for dashboard (proxy to /health)
+app.get('/api/health', async (req, res) => {
+  try {
+    const dbHealth = await db.healthCheck();
+    
+    res.json({
+      status: dbHealth.healthy ? 'healthy' : 'degraded',
+      gateway: 'RunSafe GDPR Compliance Gateway',
+      correlationId: req.correlationId,
+      database: {
+        status: dbHealth.healthy ? 'connected' : 'disconnected',
+        timestamp: dbHealth.timestamp,
+        error: dbHealth.error || null
+      },
+      features: {
+        audit_logging: dbHealth.healthy,
+        in_memory_logs: true,
+        pii_detection: true, // Stage 3 complete
+        export_functionality: true // Stage 4 complete
+      }
+    });
+  } catch (error) {
+    logger.error('Dashboard health check failed', {
+      correlationId: req.correlationId,
+      error: error.message
+    });
+    
+    res.status(503).json({
+      status: 'unhealthy',
+      gateway: 'RunSafe GDPR Compliance Gateway',
+      correlationId: req.correlationId,
+      error: error.message
+    });
+  }
+});
+
 // Catch-all for unmatched routes
 app.use('*', (req, res) => {
   logger.warn('Route not found', {
