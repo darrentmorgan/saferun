@@ -208,6 +208,253 @@ async function logPiiViolation(violationData) {
 }
 
 /**
+ * Log enforcement action to database
+ * @param {Object} enforcementData - Enforcement action data
+ * @returns {Promise<Object>} - Inserted enforcement record
+ */
+async function logEnforcementAction(enforcementData) {
+  const {
+    auditId,
+    correlationId,
+    enforcementMode,
+    action,
+    appliedActions = [],
+    blockReason = null,
+    warnings = [],
+    violationsCount = 0,
+    dataModified = false,
+    processingTimeMs = null
+  } = enforcementData;
+
+  const query = `
+    INSERT INTO enforcement_actions (
+      audit_id, correlation_id, enforcement_mode, action, applied_actions,
+      block_reason, warnings, violations_count, data_modified, processing_time_ms
+    ) VALUES (
+      $1, $2, $3, $4, $5, $6, $7, $8, $9, $10
+    ) RETURNING enforcement_id, action_timestamp
+  `;
+
+  const values = [
+    auditId, correlationId, enforcementMode, action, JSON.stringify(appliedActions),
+    blockReason, JSON.stringify(warnings), violationsCount, dataModified, processingTimeMs
+  ];
+
+  try {
+    // First ensure the enforcement_actions table exists
+    await ensureEnforcementTable();
+    
+    const result = await pool.query(query, values);
+    const enforcementRecord = result.rows[0];
+    
+    dbLogger.info('Enforcement action logged to database', {
+      enforcementId: enforcementRecord.enforcement_id,
+      auditId,
+      correlationId,
+      action,
+      enforcementMode
+    });
+    
+    return enforcementRecord;
+  } catch (error) {
+    dbLogger.error('Failed to log enforcement action to database', {
+      error: error.message,
+      auditId,
+      correlationId,
+      action
+    });
+    throw error;
+  }
+}
+
+/**
+ * Ensure enforcement_actions table exists
+ */
+async function ensureEnforcementTable() {
+  const createTableQuery = `
+    CREATE TABLE IF NOT EXISTS enforcement_actions (
+      enforcement_id SERIAL PRIMARY KEY,
+      audit_id INTEGER REFERENCES audit_logs(audit_id) ON DELETE CASCADE,
+      correlation_id VARCHAR(64) NOT NULL,
+      enforcement_mode VARCHAR(20) NOT NULL,
+      action VARCHAR(20) NOT NULL,
+      applied_actions JSONB DEFAULT '[]'::jsonb,
+      block_reason TEXT,
+      warnings JSONB DEFAULT '[]'::jsonb,
+      violations_count INTEGER DEFAULT 0,
+      data_modified BOOLEAN DEFAULT false,
+      processing_time_ms INTEGER,
+      action_timestamp TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+      INDEX(correlation_id),
+      INDEX(audit_id),
+      INDEX(enforcement_mode),
+      INDEX(action),
+      INDEX(action_timestamp)
+    );
+  `;
+
+  try {
+    await pool.query(createTableQuery);
+    dbLogger.info('Enforcement actions table ensured');
+  } catch (error) {
+    dbLogger.warn('Note: Could not create enforcement table with indexes, trying without', {
+      error: error.message
+    });
+    
+    // Try without indexes if the full CREATE fails
+    const simpleCreateQuery = `
+      CREATE TABLE IF NOT EXISTS enforcement_actions (
+        enforcement_id SERIAL PRIMARY KEY,
+        audit_id INTEGER,
+        correlation_id VARCHAR(64) NOT NULL,
+        enforcement_mode VARCHAR(20) NOT NULL,
+        action VARCHAR(20) NOT NULL,
+        applied_actions JSONB DEFAULT '[]'::jsonb,
+        block_reason TEXT,
+        warnings JSONB DEFAULT '[]'::jsonb,
+        violations_count INTEGER DEFAULT 0,
+        data_modified BOOLEAN DEFAULT false,
+        processing_time_ms INTEGER,
+        action_timestamp TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+      );
+    `;
+    
+    await pool.query(simpleCreateQuery);
+    dbLogger.info('Enforcement actions table created (simple version)');
+  }
+}
+
+/**
+ * Get detailed violation information including audit log and enforcement data
+ * @param {string} violationId - Violation ID
+ * @returns {Promise<Object>} - Detailed violation record
+ */
+async function getViolationDetail(violationId) {
+  // First try to get the basic violation and audit data
+  const query = `
+    SELECT 
+      v.violation_id, v.violation_type, v.violation_category, v.detected_at,
+      v.detected_text, v.redacted_text, v.confidence_score, v.field_path,
+      v.data_source, v.gdpr_article, v.legal_basis,
+      a.audit_id, a.audit_timestamp, a.correlation_id, a.method, a.endpoint, 
+      a.provider, a.user_agent, a.client_ip, a.request_headers, a.request_body,
+      a.response_status, a.response_headers, a.response_body, a.response_time_ms,
+      a.request_size_bytes, a.response_size_bytes, a.metadata,
+      CASE 
+        WHEN v.confidence_score >= 0.8 THEN 'high'
+        WHEN v.confidence_score >= 0.6 THEN 'medium'
+        ELSE 'low'
+      END as risk_level
+    FROM pii_violations v
+    JOIN audit_logs a ON v.audit_id = a.audit_id
+    WHERE v.violation_id = $1
+  `;
+
+  try {
+    const result = await pool.query(query, [violationId]);
+    
+    if (result.rows.length === 0) {
+      return null;
+    }
+
+    const row = result.rows[0];
+    
+    // Structure the result with proper JSON parsing
+    const violationDetail = {
+      violation_id: row.violation_id,
+      violation_type: row.violation_type,
+      violation_category: row.violation_category,
+      detected_text: row.detected_text,
+      redacted_text: row.redacted_text,
+      confidence_score: row.confidence_score,
+      field_path: row.field_path,
+      data_source: row.data_source,
+      gdpr_article: row.gdpr_article,
+      legal_basis: row.legal_basis,
+      detected_at: row.detected_at,
+      correlation_id: row.correlation_id,
+      endpoint: row.endpoint,
+      provider: row.provider,
+      risk_level: row.risk_level,
+      
+      // Audit log details
+      audit_id: row.audit_id,
+      audit_timestamp: row.audit_timestamp,
+      method: row.method,
+      user_agent: row.user_agent,
+      client_ip: row.client_ip,
+      request_headers: typeof row.request_headers === 'string' 
+        ? JSON.parse(row.request_headers) 
+        : row.request_headers,
+      request_body: typeof row.request_body === 'string' 
+        ? JSON.parse(row.request_body) 
+        : row.request_body,
+      response_status: row.response_status,
+      response_headers: typeof row.response_headers === 'string' 
+        ? JSON.parse(row.response_headers) 
+        : row.response_headers,
+      response_body: typeof row.response_body === 'string' 
+        ? JSON.parse(row.response_body) 
+        : row.response_body,
+      response_time_ms: row.response_time_ms,
+      request_size_bytes: row.request_size_bytes,
+      response_size_bytes: row.response_size_bytes
+    };
+
+    // Try to get enforcement actions if they exist
+    try {
+      const enforcementQuery = `
+        SELECT enforcement_id, enforcement_mode, action, applied_actions,
+               block_reason, warnings, data_modified, processing_time_ms,
+               action_timestamp
+        FROM enforcement_actions 
+        WHERE audit_id = $1
+      `;
+      
+      const enforcementResult = await pool.query(enforcementQuery, [row.audit_id]);
+      
+      if (enforcementResult.rows.length > 0) {
+        const enfRow = enforcementResult.rows[0];
+        violationDetail.enforcement_actions = {
+          enforcement_id: enfRow.enforcement_id,
+          enforcement_mode: enfRow.enforcement_mode,
+          action: enfRow.action,
+          applied_actions: typeof enfRow.applied_actions === 'string' 
+            ? JSON.parse(enfRow.applied_actions) 
+            : enfRow.applied_actions,
+          block_reason: enfRow.block_reason,
+          warnings: typeof enfRow.warnings === 'string' 
+            ? JSON.parse(enfRow.warnings) 
+            : enfRow.warnings,
+          data_modified: enfRow.data_modified,
+          processing_time_ms: enfRow.processing_time_ms,
+          action_timestamp: enfRow.action_timestamp
+        };
+      }
+    } catch (enforcementError) {
+      // If enforcement_actions table doesn't exist, just skip it
+      dbLogger.info('Enforcement actions table not found, skipping enforcement data', {
+        violationId,
+        error: enforcementError.message
+      });
+    }
+
+    dbLogger.info('Violation detail retrieved', {
+      violationId,
+      hasEnforcementActions: !!violationDetail.enforcement_actions
+    });
+
+    return violationDetail;
+  } catch (error) {
+    dbLogger.error('Failed to get violation detail', {
+      error: error.message,
+      violationId
+    });
+    throw error;
+  }
+}
+
+/**
  * Get recent audit logs
  * @param {Object} options - Query options
  * @returns {Promise<Array>} - Array of audit log records
@@ -351,6 +598,9 @@ module.exports = {
   healthCheck,
   logAuditEntry,
   logPiiViolation,
+  logEnforcementAction,
+  ensureEnforcementTable,
+  getViolationDetail,
   getRecentAuditLogs,
   getRecentViolations,
   updateSystemMetadata,

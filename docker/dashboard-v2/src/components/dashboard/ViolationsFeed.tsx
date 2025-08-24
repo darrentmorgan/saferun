@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button'
 import { AlertTriangle, Eye, Clock, MapPin, Loader2 } from 'lucide-react'
 import { formatTimestamp, formatRiskLevel } from '@/lib/utils'
 import { violationsApi } from '@/services/api'
+import { ViolationDetailModal } from './ViolationDetailModal'
 import type { PiiViolation } from '@/types'
 
 
@@ -12,6 +13,8 @@ export function ViolationsFeed() {
   const [violations, setViolations] = useState<PiiViolation[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [selectedViolationId, setSelectedViolationId] = useState<string | null>(null)
+  const [modalOpen, setModalOpen] = useState(false)
 
   useEffect(() => {
     const fetchRecentViolations = async () => {
@@ -30,6 +33,11 @@ export function ViolationsFeed() {
 
     fetchRecentViolations()
   }, [])
+
+  const handleViewDetails = (violationId: string) => {
+    setSelectedViolationId(violationId)
+    setModalOpen(true)
+  }
 
   return (
     <Card>
@@ -109,7 +117,11 @@ export function ViolationsFeed() {
 
                 {/* Actions */}
                 <div className="ml-4">
-                  <Button variant="ghost" size="sm">
+                  <Button 
+                    variant="ghost" 
+                    size="sm"
+                    onClick={() => handleViewDetails(violation.violation_id)}
+                  >
                     <Eye className="h-4 w-4" />
                   </Button>
                 </div>
@@ -125,6 +137,17 @@ export function ViolationsFeed() {
           </div>
         )}
       </CardContent>
+      
+      <ViolationDetailModal
+        violationId={selectedViolationId}
+        open={modalOpen}
+        onOpenChange={(open) => {
+          setModalOpen(open)
+          if (!open) {
+            setSelectedViolationId(null)
+          }
+        }}
+      />
     </Card>
   )
 }

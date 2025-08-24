@@ -178,6 +178,38 @@ app.use((req, res, next) => {
             riskLevels: req.piiViolations.map(v => v.risk_level)
           });
         }
+
+        // Log enforcement actions if any were applied
+        if (req.enforcementResult && req.enforcementResult.appliedActions.length > 0) {
+          try {
+            await db.logEnforcementAction({
+              auditId: auditRecord.audit_id,
+              correlationId: req.correlationId,
+              enforcementMode: piiDetector.getEnforcementMode(),
+              action: req.enforcementResult.action,
+              appliedActions: req.enforcementResult.appliedActions,
+              blockReason: req.enforcementResult.blockReason,
+              warnings: req.enforcementResult.warnings,
+              violationsCount: req.piiViolations.length,
+              dataModified: req.enforcementResult.modified,
+              processingTimeMs: Date.now() - req.startTime
+            });
+
+            logger.info('Enforcement action logged to database', {
+              correlationId: req.correlationId,
+              provider,
+              endpoint,
+              action: req.enforcementResult.action,
+              appliedActions: req.enforcementResult.appliedActions
+            });
+          } catch (enforcementError) {
+            logger.error('Failed to log enforcement action to database', {
+              correlationId: req.correlationId,
+              action: req.enforcementResult.action,
+              error: enforcementError.message
+            });
+          }
+        }
         
         logger.info('AI request logged to database', {
           correlationId: req.correlationId,
@@ -241,17 +273,73 @@ app.use(['/v1/chat/completions', '/v1/embeddings', '/v1/messages', '/chat/comple
       
       // Initialize PII tracking and scan immediately
       req.piiViolations = [];
+      req.enforcementResult = null;
+      
       if (req.body && typeof req.body === 'object') {
         const requestViolations = piiDetector.scanObject(req.body, 'request_body', req.correlationId);
         req.piiViolations.push(...requestViolations);
         
         if (requestViolations.length > 0) {
-          logger.warn('PII detected in AI request (pre-proxy)', {
+          // Apply enforcement policy
+          req.enforcementResult = piiDetector.applyEnforcement(req.body, requestViolations, 'request');
+          
+          logger.warn('PII detected in AI request - applying enforcement', {
             correlationId: req.correlationId,
             violations: requestViolations.length,
             types: requestViolations.map(v => v.type),
-            riskLevels: requestViolations.map(v => v.risk_level)
+            riskLevels: requestViolations.map(v => v.risk_level),
+            enforcementMode: piiDetector.getEnforcementMode(),
+            action: req.enforcementResult.action,
+            appliedActions: req.enforcementResult.appliedActions
           });
+
+          // Block request if enforcement says to block
+          if (req.enforcementResult.action === 'block') {
+            logger.error('Request blocked due to PII policy violation', {
+              correlationId: req.correlationId,
+              reason: req.enforcementResult.blockReason,
+              violations: requestViolations.map(v => ({
+                type: v.type,
+                risk: v.risk_level,
+                category: v.category
+              }))
+            });
+
+            return res.status(403).json({
+              error: 'Request blocked by GDPR policy',
+              message: req.enforcementResult.blockReason,
+              correlation_id: req.correlationId,
+              policy_violations: requestViolations.map(v => ({
+                type: v.type,
+                risk_level: v.risk_level,
+                category: v.category,
+                gdpr_article: v.gdpr_article
+              }))
+            });
+          }
+
+          // Use sanitized data if enforcement modified it
+          if (req.enforcementResult.modified) {
+            req.body = req.enforcementResult.sanitizedData;
+            req.rawBody = JSON.stringify(req.body);
+            
+            logger.info('Request data sanitized by enforcement policy', {
+              correlationId: req.correlationId,
+              originalSize: bodyString.length,
+              sanitizedSize: req.rawBody.length,
+              appliedActions: req.enforcementResult.appliedActions
+            });
+          }
+
+          // Log warnings
+          if (req.enforcementResult.warnings && req.enforcementResult.warnings.length > 0) {
+            req.enforcementResult.warnings.forEach(warning => {
+              logger.warn('GDPR Policy Warning', {
+                correlationId: req.correlationId,
+                warning
+              });
+            });
+          }
         }
       }
       
@@ -711,6 +799,46 @@ app.get('/api/violations', async (req, res) => {
   }
 });
 
+// Get detailed violation information
+app.get('/api/violations/:id', async (req, res) => {
+  try {
+    const violationId = req.params.id;
+    
+    logger.info('Violation detail requested', {
+      correlationId: req.correlationId,
+      violationId
+    });
+
+    const violationDetail = await db.getViolationDetail(violationId);
+
+    if (!violationDetail) {
+      return res.status(404).json({
+        error: 'Violation not found',
+        violationId,
+        correlationId: req.correlationId
+      });
+    }
+
+    res.json({
+      violation: violationDetail,
+      correlationId: req.correlationId,
+      timestamp: new Date().toISOString()
+    });
+
+  } catch (error) {
+    logger.error('Failed to retrieve violation detail', {
+      correlationId: req.correlationId,
+      violationId: req.params.id,
+      error: error.message
+    });
+    
+    res.status(500).json({
+      error: 'Failed to retrieve violation detail',
+      correlationId: req.correlationId
+    });
+  }
+});
+
 // PII Detection status and statistics
 app.get('/api/pii-status', (req, res) => {
   try {
@@ -790,6 +918,178 @@ app.get('/api/endpoints', (req, res) => {
       }
     }
   });
+});
+
+// Policy enforcement configuration endpoints
+app.get('/api/policy/enforcement', (req, res) => {
+  try {
+    const enforcementMode = piiDetector.getEnforcementMode();
+    const policyConfig = piiDetector.policy?.gdpr || {};
+    
+    res.json({
+      correlationId: req.correlationId,
+      enforcement: {
+        current_mode: enforcementMode,
+        available_modes: ['monitor', 'warn', 'block', 'sanitize'],
+        actions: policyConfig.actions || {},
+        max_retention_days: policyConfig.max_retention_days || 1095,
+        block_special_categories: policyConfig.block_special_categories || [],
+        mask_fields: policyConfig.mask_fields || []
+      },
+      statistics: piiDetector.getStats()
+    });
+  } catch (error) {
+    logger.error('Failed to get enforcement configuration', {
+      correlationId: req.correlationId,
+      error: error.message
+    });
+    
+    res.status(500).json({
+      error: 'Failed to get enforcement configuration',
+      correlationId: req.correlationId
+    });
+  }
+});
+
+app.post('/api/policy/enforcement/mode', express.json(), (req, res) => {
+  try {
+    const { mode, actions } = req.body;
+    
+    // Validate mode
+    const validModes = ['monitor', 'warn', 'block', 'sanitize'];
+    if (!validModes.includes(mode)) {
+      return res.status(400).json({
+        error: 'Invalid enforcement mode',
+        validModes,
+        correlationId: req.correlationId
+      });
+    }
+
+    // Update policy configuration
+    if (!piiDetector.policy.gdpr) {
+      piiDetector.policy.gdpr = {};
+    }
+    
+    piiDetector.policy.gdpr.mode = mode;
+    
+    if (actions) {
+      piiDetector.policy.gdpr.actions = { ...piiDetector.policy.gdpr.actions, ...actions };
+    }
+
+    logger.info('Enforcement mode updated', {
+      correlationId: req.correlationId,
+      newMode: mode,
+      actions,
+      updatedBy: req.ip
+    });
+
+    res.json({
+      success: true,
+      correlationId: req.correlationId,
+      enforcement: {
+        mode: piiDetector.getEnforcementMode(),
+        actions: piiDetector.policy.gdpr.actions
+      }
+    });
+  } catch (error) {
+    logger.error('Failed to update enforcement mode', {
+      correlationId: req.correlationId,
+      error: error.message
+    });
+    
+    res.status(500).json({
+      error: 'Failed to update enforcement mode',
+      correlationId: req.correlationId
+    });
+  }
+});
+
+app.get('/api/policy/test', (req, res) => {
+  try {
+    const testResults = piiDetector.runTests();
+    
+    res.json({
+      correlationId: req.correlationId,
+      test_results: testResults,
+      enforcement_mode: piiDetector.getEnforcementMode(),
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    logger.error('Failed to run PII detection tests', {
+      correlationId: req.correlationId,
+      error: error.message
+    });
+    
+    res.status(500).json({
+      error: 'Failed to run tests',
+      correlationId: req.correlationId
+    });
+  }
+});
+
+app.post('/api/policy/test-enforcement', express.json(), (req, res) => {
+  try {
+    const { data, mode } = req.body;
+    
+    if (!data) {
+      return res.status(400).json({
+        error: 'Test data is required',
+        correlationId: req.correlationId
+      });
+    }
+
+    // Temporarily change mode for testing if provided
+    const originalMode = piiDetector.getEnforcementMode();
+    if (mode && mode !== originalMode) {
+      piiDetector.policy.gdpr.mode = mode;
+    }
+
+    try {
+      // Scan for PII violations
+      const violations = piiDetector.scanObject(data, 'test_data', req.correlationId);
+      
+      // Apply enforcement
+      const enforcementResult = piiDetector.applyEnforcement(data, violations, 'test');
+      
+      res.json({
+        correlationId: req.correlationId,
+        test_data: data,
+        violations_detected: violations.length,
+        violations: violations.map(v => ({
+          type: v.type,
+          risk_level: v.risk_level,
+          category: v.category,
+          detected_text: v.detected_text,
+          redacted_text: v.redacted_text
+        })),
+        enforcement_result: {
+          action: enforcementResult.action,
+          modified: enforcementResult.modified,
+          block_reason: enforcementResult.blockReason,
+          warnings: enforcementResult.warnings,
+          applied_actions: enforcementResult.appliedActions
+        },
+        sanitized_data: enforcementResult.sanitizedData,
+        test_mode: mode || originalMode,
+        timestamp: new Date().toISOString()
+      });
+    } finally {
+      // Restore original mode
+      if (mode && mode !== originalMode) {
+        piiDetector.policy.gdpr.mode = originalMode;
+      }
+    }
+  } catch (error) {
+    logger.error('Failed to test enforcement', {
+      correlationId: req.correlationId,
+      error: error.message
+    });
+    
+    res.status(500).json({
+      error: 'Failed to test enforcement',
+      correlationId: req.correlationId
+    });
+  }
 });
 
 // Health check endpoint with database status

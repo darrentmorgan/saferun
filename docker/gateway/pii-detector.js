@@ -312,6 +312,193 @@ class PIIDetector {
   }
 
   /**
+   * Get current enforcement mode from policy
+   * @returns {string} Enforcement mode: monitor, warn, block, sanitize
+   */
+  getEnforcementMode() {
+    return this.policy?.gdpr?.mode || 'monitor';
+  }
+
+  /**
+   * Apply enforcement action based on policy and violations
+   * @param {Object} data - Request/response data
+   * @param {Array} violations - Detected violations
+   * @param {string} source - Data source (request/response)
+   * @returns {Object} Enforcement result
+   */
+  applyEnforcement(data, violations, source = 'request') {
+    const mode = this.getEnforcementMode();
+    const actions = this.policy?.gdpr?.actions || {};
+    
+    // Group violations by risk level
+    const highRiskViolations = violations.filter(v => v.risk_level === 'high');
+    const mediumRiskViolations = violations.filter(v => v.risk_level === 'medium');
+    const lowRiskViolations = violations.filter(v => v.risk_level === 'low');
+
+    let result = {
+      action: 'allow',
+      modified: false,
+      sanitizedData: data,
+      blockReason: null,
+      warnings: [],
+      appliedActions: []
+    };
+
+    // Monitor mode: just log, no enforcement
+    if (mode === 'monitor') {
+      result.action = 'allow';
+      result.appliedActions.push('logged_for_monitoring');
+      return result;
+    }
+
+    // For modes other than monitor, apply the mode directly
+    if (mode === 'block' && violations.length > 0) {
+      result.action = 'block';
+      result.blockReason = `Blocked by ${mode} mode - PII detected: ${violations.map(v => `${v.type} (${v.risk_level})`).join(', ')}`;
+      result.appliedActions.push(`blocked_by_${mode}_mode`);
+      return result;
+    }
+
+    if (mode === 'sanitize' && violations.length > 0) {
+      result.sanitizedData = this.sanitizeData(data, violations);
+      result.modified = true;
+      result.action = 'allow';
+      result.appliedActions.push(`sanitized_by_${mode}_mode`);
+      return result;
+    }
+
+    if (mode === 'warn' && violations.length > 0) {
+      result.warnings.push(`Warning by ${mode} mode - PII detected: ${violations.map(v => `${v.type} (${v.risk_level})`).join(', ')}`);
+      result.appliedActions.push(`warned_by_${mode}_mode`);
+      return result;
+    }
+
+    // Fallback to policy-defined actions if mode is not recognized or no violations
+    if (violations.length > 0) {
+      // Apply actions based on risk levels
+      if (highRiskViolations.length > 0) {
+        const action = actions.on_high || 'block';
+        result = this.applyActionForRisk('high', action, data, highRiskViolations, result);
+      }
+
+      if (mediumRiskViolations.length > 0 && result.action !== 'block') {
+        const action = actions.on_medium || 'redact';
+        result = this.applyActionForRisk('medium', action, data, mediumRiskViolations, result);
+      }
+
+      if (lowRiskViolations.length > 0 && result.action !== 'block') {
+        const action = actions.on_low || 'allow_with_note';
+        result = this.applyActionForRisk('low', action, data, lowRiskViolations, result);
+      }
+    }
+
+    return result;
+  }
+
+  /**
+   * Apply specific action for violations of a given risk level
+   * @param {string} riskLevel - Risk level (high/medium/low)
+   * @param {string} action - Action to take
+   * @param {Object} data - Original data
+   * @param {Array} violations - Violations for this risk level
+   * @param {Object} result - Current enforcement result
+   * @returns {Object} Updated enforcement result
+   */
+  applyActionForRisk(riskLevel, action, data, violations, result) {
+    switch (action) {
+      case 'block':
+        result.action = 'block';
+        result.blockReason = `Blocked due to ${riskLevel} risk PII: ${violations.map(v => v.type).join(', ')}`;
+        result.appliedActions.push(`blocked_${riskLevel}_risk`);
+        break;
+
+      case 'redact':
+      case 'sanitize':
+        result.sanitizedData = this.sanitizeData(data, violations);
+        result.modified = true;
+        result.appliedActions.push(`sanitized_${riskLevel}_risk`);
+        break;
+
+      case 'warn':
+        result.warnings.push(`Warning: ${riskLevel} risk PII detected: ${violations.map(v => v.type).join(', ')}`);
+        result.appliedActions.push(`warned_${riskLevel}_risk`);
+        break;
+
+      case 'allow_with_note':
+        result.warnings.push(`Note: ${riskLevel} risk PII detected but allowed: ${violations.map(v => v.type).join(', ')}`);
+        result.appliedActions.push(`noted_${riskLevel}_risk`);
+        break;
+
+      default:
+        result.appliedActions.push(`default_action_${riskLevel}_risk`);
+    }
+
+    return result;
+  }
+
+  /**
+   * Sanitize data by redacting PII violations
+   * @param {Object} data - Original data
+   * @param {Array} violations - Violations to redact
+   * @returns {Object} Sanitized data
+   */
+  sanitizeData(data, violations) {
+    if (!data || typeof data !== 'object') {
+      return data;
+    }
+
+    let sanitizedData = JSON.parse(JSON.stringify(data)); // Deep clone
+
+    violations.forEach(violation => {
+      if (violation.field_path && violation.detected_text) {
+        sanitizedData = this.replaceInObject(
+          sanitizedData, 
+          violation.detected_text, 
+          violation.redacted_text || this.redactText(violation.detected_text, { category: violation.category })
+        );
+      }
+    });
+
+    return sanitizedData;
+  }
+
+  /**
+   * Replace text in nested object structure
+   * @param {Object} obj - Object to modify
+   * @param {string} searchText - Text to find
+   * @param {string} replaceText - Replacement text
+   * @returns {Object} Modified object
+   */
+  replaceInObject(obj, searchText, replaceText) {
+    if (typeof obj === 'string') {
+      return obj.replace(new RegExp(this.escapeRegex(searchText), 'g'), replaceText);
+    }
+    
+    if (Array.isArray(obj)) {
+      return obj.map(item => this.replaceInObject(item, searchText, replaceText));
+    }
+    
+    if (typeof obj === 'object' && obj !== null) {
+      const result = {};
+      for (const [key, value] of Object.entries(obj)) {
+        result[key] = this.replaceInObject(value, searchText, replaceText);
+      }
+      return result;
+    }
+    
+    return obj;
+  }
+
+  /**
+   * Escape special regex characters
+   * @param {string} string - String to escape
+   * @returns {string} Escaped string
+   */
+  escapeRegex(string) {
+    return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  }
+
+  /**
    * Test detection with sample data
    * @returns {Object} Test results
    */

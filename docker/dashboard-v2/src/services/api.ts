@@ -1,4 +1,4 @@
-import type { PiiViolation, DashboardStats, ViolationsResponse, LogsResponse, GatewayLog } from '@/types'
+import type { PiiViolation, DashboardStats, ViolationsResponse, LogsResponse, GatewayLog, ViolationDetail } from '@/types'
 
 const API_BASE_URL = '/api'
 
@@ -94,6 +94,13 @@ export const violationsApi = {
   async getRecentViolations(limit: number = 5): Promise<PiiViolation[]> {
     const response = await this.getViolations({ limit })
     return response.violations
+  },
+
+  // Get detailed violation information
+  async getViolationDetail(violationId: string): Promise<ViolationDetail> {
+    const endpoint = `/violations/${violationId}`
+    const response = await apiRequest<{ violation: ViolationDetail }>(endpoint)
+    return response.violation
   }
 }
 

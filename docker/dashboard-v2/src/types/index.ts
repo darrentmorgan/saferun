@@ -94,3 +94,30 @@ export interface ExportRequest {
   format: 'csv' | 'pdf'
   includeRedacted?: boolean
 }
+
+export interface ViolationDetail extends PiiViolation {
+  audit_id: string
+  audit_timestamp: string
+  method: string
+  request_headers: Record<string, any>
+  request_body: Record<string, any>
+  response_status: number
+  response_headers: Record<string, any>
+  response_body: Record<string, any>
+  response_time_ms: number
+  request_size_bytes: number | null
+  response_size_bytes: number | null
+  user_agent: string | null
+  client_ip: string | null
+  enforcement_actions?: {
+    enforcement_id: string
+    enforcement_mode: string
+    action: string
+    applied_actions: string[]
+    block_reason?: string
+    warnings: string[]
+    data_modified: boolean
+    processing_time_ms: number | null
+    action_timestamp: string
+  }
+}

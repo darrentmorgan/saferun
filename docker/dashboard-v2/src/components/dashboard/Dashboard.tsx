@@ -5,6 +5,7 @@ import { KPICards } from '@/components/dashboard/KPICards'
 import { ViolationsFeed } from '@/components/dashboard/ViolationsFeed'
 import { LiveLogsPage } from '@/components/logs/LiveLogsPage'
 import { ViolationsPage } from '@/components/violations/ViolationsPage'
+import { AnalyticsPage } from '@/components/analytics/AnalyticsPage'
 import { cn } from '@/lib/utils'
 
 export function Dashboard() {
@@ -49,6 +50,8 @@ export function Dashboard() {
               <LiveLogsPage />
             ) : currentView === 'violations' ? (
               <ViolationsPage />
+            ) : currentView === 'analytics' ? (
+              <AnalyticsPage />
             ) : (
               <>
                 {/* Page Title */}

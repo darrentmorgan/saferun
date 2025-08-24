@@ -9,6 +9,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { AlertTriangle, Search, Filter, Download, Eye, FileText, Loader2, AlertCircle } from 'lucide-react'
 import { formatTimestamp, formatRiskLevel } from '@/lib/utils'
 import { violationsApi, exportApi, downloadBlob } from '@/services/api'
+import { ViolationDetailModal } from '@/components/violations/ViolationDetailModal'
 import type { PiiViolation } from '@/types'
 
 
@@ -24,6 +25,8 @@ export function ViolationsPage() {
   const [gdprFilter, setGdprFilter] = useState('all')
   const [currentPage, setCurrentPage] = useState(1)
   const [totalCount, setTotalCount] = useState(0)
+  const [selectedViolationId, setSelectedViolationId] = useState<string | null>(null)
+  const [isDetailModalOpen, setIsDetailModalOpen] = useState(false)
   const itemsPerPage = 10
 
   // Fetch violations from API
@@ -110,6 +113,17 @@ export function ViolationsPage() {
   const handleRetry = () => {
     setError(null)
     fetchViolations()
+  }
+
+  // Modal handlers
+  const handleViewDetails = (violationId: string) => {
+    setSelectedViolationId(violationId)
+    setIsDetailModalOpen(true)
+  }
+
+  const handleCloseDetailModal = () => {
+    setIsDetailModalOpen(false)
+    setSelectedViolationId(null)
   }
 
   return (
@@ -345,7 +359,12 @@ export function ViolationsPage() {
                         </span>
                       </TableCell>
                       <TableCell>
-                        <Button variant="ghost" size="sm">
+                        <Button 
+                          variant="ghost" 
+                          size="sm"
+                          onClick={() => handleViewDetails(violation.violation_id)}
+                          title="View detailed information"
+                        >
                           <Eye className="h-4 w-4" />
                         </Button>
                       </TableCell>
@@ -417,6 +436,13 @@ export function ViolationsPage() {
           </div>
         </CardContent>
       </Card>
+
+      {/* Violation Detail Modal */}
+      <ViolationDetailModal
+        violationId={selectedViolationId}
+        isOpen={isDetailModalOpen}
+        onClose={handleCloseDetailModal}
+      />
     </div>
   )
 }

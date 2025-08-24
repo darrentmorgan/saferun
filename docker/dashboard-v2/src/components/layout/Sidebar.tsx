@@ -1,4 +1,4 @@
-import { Shield, Activity, AlertTriangle, Settings, HelpCircle, ScrollText } from 'lucide-react'
+import { Shield, Activity, AlertTriangle, Settings, HelpCircle, ScrollText, BarChart3 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
 interface SidebarProps {
@@ -16,6 +16,7 @@ interface NavigationItem {
 const navigationItems: NavigationItem[] = [
   { name: 'Dashboard', icon: Shield, href: '#dashboard', current: false },
   { name: 'Violations', icon: AlertTriangle, href: '#violations', current: false },
+  { name: 'Analytics', icon: BarChart3, href: '#analytics', current: false },
   { name: 'Live Logs', icon: ScrollText, href: '#logs', current: false },
   { name: 'Activity', icon: Activity, href: '#activity', current: false },
   { name: 'Settings', icon: Settings, href: '#settings', current: false },
